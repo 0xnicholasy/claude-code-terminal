@@ -123,3 +123,52 @@ enum InheritedSessionEnv {
         for name in toRemove(from: ProcessInfo.processInfo.environment) { unsetenv(name) }
     }
 }
+
+/// Apps started from Finder, Launchpad or `open` get launchd's PATH (`/usr/bin:/bin:/usr/sbin:/sbin`),
+/// so hooks in a pane's claude that call `node`, `python3` or `bun` fail with "command not found"
+/// (seen live 2026-11-07). The app adopts the login shell's PATH before any pane spawns.
+enum LoginPath {
+    static let marker = "__CCTERM_PATH__"
+
+    /// Extracts the PATH printed between two markers, ignoring anything a profile prints around it.
+    static func parse(_ output: String) -> String? {
+        let parts = output.components(separatedBy: marker)
+        guard parts.count >= 3 else { return nil }
+        let path = parts[parts.count - 2].trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.hasPrefix("/") && !path.contains("\n") ? path : nil
+    }
+
+    /// Login PATH first; entries of the current PATH that it lacks are kept at the end.
+    static func merge(login: String?, current: String, fallback: [String]) -> String {
+        var seen = Set<String>()
+        let base = login.map { $0.split(separator: ":").map(String.init) } ?? fallback
+        let all = base + current.split(separator: ":").map(String.init)
+        return all.filter { !$0.isEmpty && seen.insert($0).inserted }.joined(separator: ":")
+    }
+
+    /// Runs `zsh -l` with a 5 s cap; a hung profile must not hold up launch.
+    static func lookup(timeout: TimeInterval = 5) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        p.arguments = ["-lc", "printf '%s%s%s' \(marker) \"$PATH\" \(marker)"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let timer = DispatchWorkItem { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        timer.cancel()
+        return parse(String(decoding: data, as: UTF8.self))
+    }
+
+    static func adopt() {
+        let current = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let home = NSHomeDirectory()
+        let fallback = ["\(home)/.local/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+                        "\(home)/.bun/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        setenv("PATH", merge(login: lookup(), current: current, fallback: fallback), 1)
+    }
+}

@@ -16,3 +16,6 @@
 - Never write an image pipeline's output over its own source file; write to a scratch path, inspect, then copy. (The icon master was overwritten with a black tile once and had to be restored from git.)
 - Never pipe `scripts/fleet.sh start` into `tail`/`head`: its backgrounded subshells hold the pipe open, so the pipeline never ends. Run it unpiped.
 - Ghostty keybind names are not guessable (`super+shift+[`, `super+digit_1`, `super+alt+arrow_up`). Copy them from `ghostty +list-keybinds --default` before unbinding, then verify each shortcut live.
+- `cmd <<'A' || fallback <<'B'` with two heredocs silently runs nothing useful: the first command succeeds on an empty program, so the fallback never runs. Call the known-good binary directly (`/usr/bin/python3 -I -`) and check the result (2026-11-07).
+- The rtk hook rewrites `cat` with several file arguments into its own reader, which fails. Use `/bin/cat` to concatenate files (2026-11-07).
+- GUI-launched apps get launchd's PATH, and so does every child: hooks in a pane's claude failed with `node: command not found`. Adopt the login shell's PATH at startup, before any pane spawns (2026-11-07).

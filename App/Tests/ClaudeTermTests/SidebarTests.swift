@@ -101,3 +101,13 @@ struct SidebarTests {
         #expect(m.resumeCommandLine(s(a, "/w/it's", "x", .idle)) == "cd '/w/it'\\''s' && '/usr/bin/claude' --resume \(a)")
     }
 }
+
+@Suite struct ShortcutTests {
+    @Test func paneShortcutsMatchGoMenu() {
+        #expect(Shortcuts.pane(index: 0, count: 3) == "\u{2318}1")
+        #expect(Shortcuts.pane(index: 7, count: 12) == "\u{2318}8")
+        #expect(Shortcuts.pane(index: 11, count: 12) == "\u{2318}9")
+        #expect(Shortcuts.pane(index: 9, count: 12) == nil)
+        #expect(Shortcuts.pane(index: 3, count: 3) == nil)
+    }
+}

@@ -65,3 +65,22 @@ struct InheritedSessionEnvTests {
         #expect(InheritedSessionEnv.toRemove(from: env) == ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID"])
     }
 }
+
+@Suite struct LoginPathTests {
+    @Test func parseIgnoresProfileNoise() {
+        let out = "Welcome!\n__CCTERM_PATH__/opt/homebrew/bin:/usr/bin__CCTERM_PATH__\nbye"
+        #expect(LoginPath.parse(out) == "/opt/homebrew/bin:/usr/bin")
+        #expect(LoginPath.parse("no markers here") == nil)
+        #expect(LoginPath.parse("__CCTERM_PATH__relative/bin__CCTERM_PATH__") == nil)
+    }
+
+    @Test func mergePutsLoginFirstAndKeepsCurrentExtras() {
+        let merged = LoginPath.merge(login: "/opt/homebrew/bin:/usr/bin", current: "/usr/bin:/bin:/custom", fallback: ["/x"])
+        #expect(merged == "/opt/homebrew/bin:/usr/bin:/bin:/custom")
+    }
+
+    @Test func mergeUsesFallbackWhenLoginShellFails() {
+        let merged = LoginPath.merge(login: nil, current: "/usr/bin:/bin", fallback: ["/opt/homebrew/bin", "/usr/bin"])
+        #expect(merged == "/opt/homebrew/bin:/usr/bin:/bin")
+    }
+}

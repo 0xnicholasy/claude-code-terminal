@@ -5,11 +5,11 @@ struct UsageView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 18) {
                 quotaSection
                 costSection
             }
-            .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: 660, alignment: .leading)
             .padding(28)
             .frame(maxWidth: .infinity)
         }
@@ -18,6 +18,10 @@ struct UsageView: View {
     // MARK: Quota
 
     @ViewBuilder private var quotaSection: some View {
+        Card(padding: 18) { quotaBody }
+    }
+
+    @ViewBuilder private var quotaBody: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Plan quota").font(.headline)
             if let q = usage.quota {
@@ -51,6 +55,10 @@ struct UsageView: View {
     // MARK: Cost
 
     @ViewBuilder private var costSection: some View {
+        Card(padding: 18) { costBody }
+    }
+
+    @ViewBuilder private var costBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Usage cost").font(.headline)
@@ -172,8 +180,12 @@ struct QuotaChip: View {
 
     private func help(_ label: String, _ w: QuotaWindow?) -> String {
         let name = label == "5h" ? "5-hour window" : "Weekly limit"
-        guard let w else { return quota == nil ? "\(name): loading" : "\(name): no limit reported by Claude Code" }
-        return ["\(name): \(Int(w.usedPercent.rounded()))% used", QuotaStyle.resetText(w)].compactMap { $0 }.joined(separator: ", ")
+        let details = Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab)
+        guard let w else {
+            return (quota == nil ? "\(name): loading" : "\(name): no limit reported by Claude Code") + "\n" + details
+        }
+        return ["\(name): \(Int(w.usedPercent.rounded()))% used", QuotaStyle.resetText(w)].compactMap { $0 }
+            .joined(separator: ", ") + "\n" + details
     }
 }
 
@@ -260,7 +272,8 @@ struct DayCard: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.hairline))
     }
 
     private func stat(_ label: String, _ n: Int) -> some View {

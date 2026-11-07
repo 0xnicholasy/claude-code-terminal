@@ -108,6 +108,7 @@ enum Bootstrap {
     static func makeModel() -> WorkspaceModel {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }
         InheritedSessionEnv.scrubProcessEnvironment()
+        LoginPath.adopt()
         let binary = claude
         let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() },
                                    notify: { DaemonNotifier.send($0, sessionId: $1) },

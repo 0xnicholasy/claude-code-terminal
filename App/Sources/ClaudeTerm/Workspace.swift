@@ -48,6 +48,10 @@ final class Pane: ObservableObject, Identifiable {
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
     static let sharedController = TerminalController { config in
         for key in unboundKeys { config.withCustom("keybind", "\(key)=unbind") }
+        // Breathing room between the terminal text and the sidebar / status strip.
+        config.withCustom("window-padding-x", "12")
+        config.withCustom("window-padding-y", "8")
+        config.withCustom("window-padding-balance", "true")
     }
 
     /// Creates the libghostty surface state on first use. Only called from a view for a launched pane.
@@ -393,5 +397,19 @@ enum DirectoryPicker {
         panel.prompt = "Open"
         panel.message = "Choose the project directory for the new session"
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
+
+extension WorkspaceModel {
+    /// The Cmd-number shortcut that selects this session's pane, when it has one.
+    func paneShortcut(_ id: String) -> String? {
+        guard let idx = panes.firstIndex(where: { $0.id == id }) else { return nil }
+        return Shortcuts.pane(index: idx, count: panes.count)
+    }
+
+    /// 1-based position of the selected pane, for "2 of 5" in the status strip.
+    var selectedPanePosition: (index: Int, count: Int)? {
+        guard let idx = panes.firstIndex(where: { $0.id == selectedID }) else { return nil }
+        return (idx + 1, panes.count)
     }
 }
