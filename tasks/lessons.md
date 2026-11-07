@@ -4,3 +4,4 @@
 - An app launched from inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION`, `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID` and similar markers. A claude started under them turns transcript saving off and is missing from `claude agents --json`. Scrub session-scoped markers before spawning; keep user knobs.
 - A Bash hook blocks commands that contain `rm` plus a `*` anywhere (even in a `case` pattern) and trailing `echo $?`. Write scripts with the Write tool; let exit codes surface.
 - `screencapture -l<id>`: pick the window by its bounds; the app also owns a hidden 500x500 window and menu-bar windows.
+- Ghostty default keybinds stay active in an embedded surface: `super+q=quit` swallowed Cmd-Q because the host does not implement the quit action. Unbind keys whose actions the host does not handle (`TerminalController { $0.withCustom("keybind", "super+q=unbind") }`).

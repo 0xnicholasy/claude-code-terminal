@@ -37,11 +37,17 @@ final class Pane: ObservableObject, Identifiable {
         onChange?()
     }
 
+    /// One libghostty controller (config + app instance) shared by every pane. Ghostty's default
+    /// `super+q=quit` keybind makes a focused surface swallow Cmd-Q, and this host does not handle
+    /// the quit action, so Cmd-Q never reached the app menu (seen live 2026-11-07). Unbind it so
+    /// the standard Quit menu item handles it.
+    static let sharedController = TerminalController { $0.withCustom("keybind", "super+q=unbind") }
+
     /// Creates the libghostty surface state on first use. Only called from a view for a launched pane.
     func viewState() -> TerminalViewState? {
         guard let spec = launched else { return nil }
         if let terminal { return terminal }
-        let state = TerminalViewState()
+        let state = TerminalViewState(controller: Pane.sharedController)
         state.configuration = TerminalSurfaceOptions(
             backend: .exec,
             workingDirectory: spec.cwd,
