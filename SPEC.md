@@ -110,14 +110,14 @@ Coexisting job: `com.hotingyuen.claude-cpu-watcher` sums CPU of all `/claude` pr
 
 **M3 App shell** (app lane)
 - `xcodegen generate && xcodebuild -scheme ClaudeTerm -destination 'platform=macOS' build test` green.
-- One pane runs `claude` in a chosen project dir; keyboard, paste, resize work. Screenshot `docs/screens/m3-pane.png`.
+- One pane runs `claude` in a chosen project dir; keyboard, paste, resize work. Screenshot taken at test time (removed from the repo: it showed real session names).
 - Sidebar shows every entry of `claude agents --json`, grouped by cwd, with state and RSS; row count equals `claude agents --json | jq length` at test time. Screenshot taken at test time (removed from the repo: it showed real session names).
 - Clicking a hibernated / not-open session opens a pane running `claude --resume <id>` in its cwd.
 - 8 panes open: app RSS (ClaudeTerm process only) < 150 MB, measured with `ps -o rss= -p <app pid>`.
 - Tests: JSON decoding of both agent shapes; grouping by project; argv builder rejects non-UUID ids.
 
 **M4 Persistence** (app lane)
-- Layout file written on change; quit + relaunch restores every pane; the focused pane runs `claude --resume <id>` in its cwd and transcript history is visible (screenshot `docs/screens/m4-restored.png`). Unfocused restored panes spawn no process until focused (`pgrep -f "resume <id>"` empty).
+- Layout file written on change; quit + relaunch restores every pane; the focused pane runs `claude --resume <id>` in its cwd and transcript history is visible (screenshot taken at test time, removed from the repo: it showed real session names). Unfocused restored panes spawn no process until focused (`pgrep -f "resume <id>"` empty).
 - Reboot survival argued from on-disk state (layout file + transcripts).
 - Tests: layout round-trip; corrupt file recovery; lazy restore (no spawn until focus).
 
