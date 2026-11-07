@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "$HOME/.local/bin/ccgovd hook" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "$HOME/.local/bin/ccgovd hook" } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "$HOME/.local/bin/ccgovd hook" } ] }
+    ]
+  }
+}
