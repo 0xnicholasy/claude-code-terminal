@@ -11,8 +11,7 @@ enum DetailTab: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @ObservedObject var model: WorkspaceModel
-    @StateObject private var usage = UsageModel()
-    @State private var tab: DetailTab = .sessions
+    @ObservedObject var usage: UsageModel
 
     var body: some View {
         NavigationSplitView {
@@ -25,25 +24,29 @@ struct ContentView: View {
                     PaneArea(model: model)
                     if let session = model.selectedSession { PaneStatusStrip(session: session) }
                 }
-                if tab == .usage {
+                if model.tab == .usage {
                     UsageView(usage: usage).background(Color(nsColor: .windowBackgroundColor))
                 }
             }
             .overlay(alignment: .top) { NoticeBanner(model: model) }
         }
         .navigationTitle("")
-        .onChange(of: model.selectedID) { _, _ in tab = .sessions }
+        .onChange(of: model.selectedID) { _, _ in model.tab = .sessions }
         .task { if !Bootstrap.isUnderTest { usage.start() } }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Picker("View", selection: $tab) {
+                Picker("View", selection: $model.tab) {
                     ForEach(DetailTab.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
             ToolbarItem(placement: .principal) {
-                MemorySummaryView(summary: model.summary, daemonConnected: model.daemonConnected)
+                HStack(spacing: 14) {
+                    MemorySummaryView(summary: model.summary, daemonConnected: model.daemonConnected)
+                    Divider().frame(height: 14)
+                    QuotaChip(quota: usage.quota)
+                }
             }
             ToolbarItem {
                 Button {

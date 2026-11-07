@@ -1,74 +1,216 @@
 import Darwin
 import Foundation
 
-// Usage tab: plan quota from `codexbar` and API-equivalent cost from `ccusage`. Both are optional
-// user-installed tools; the app only reads their output and never talks to an Anthropic API itself.
+// Usage data. Plan quota comes from Claude Code itself (the SDK `get_usage` control request, which
+// sends no prompt and costs nothing). Daily API-equivalent cost comes from `ccusage`, which reads
+// Claude Code's own transcripts. The app never talks to an Anthropic API directly.
 
 struct QuotaWindow: Equatable {
     var usedPercent: Double
     var windowMinutes: Int
     var resetsAt: Date?
-    var resetText: String?
-    /// Where usage "should" be at this point in the window if spread evenly (codexbar pace).
-    var expectedPercent: Double?
-    var paceSummary: String?
+
+    /// Where usage would be now if spread evenly over the window; nil without a reset time.
+    func expectedPercent(now: Date) -> Double? {
+        guard let resetsAt, windowMinutes > 0 else { return nil }
+        let window = Double(windowMinutes) * 60
+        let left = min(window, max(0, resetsAt.timeIntervalSince(now)))
+        return (window - left) / window * 100
+    }
+}
+
+struct ScopedQuota: Equatable {
+    var name: String
+    var window: QuotaWindow
 }
 
 struct QuotaSnapshot: Equatable {
     var fiveHour: QuotaWindow?
     var weekly: QuotaWindow?
+    var scoped: [ScopedQuota] = []
     var updatedAt: Date?
 }
 
-enum CodexbarParser {
-    private struct Entry: Decodable {
-        var usage: Usage?
-        var pace: [String: Pace]?
+enum ClaudeUsageParser {
+    private struct Line: Decodable {
+        var type: String
+        var response: Outer?
     }
 
-    private struct Usage: Decodable {
-        var primary: Window?
-        var secondary: Window?
-        var updatedAt: String?
+    private struct Outer: Decodable {
+        var subtype: String
+        var request_id: String?
+        var response: Body?
+    }
+
+    private struct Body: Decodable {
+        var rate_limits_available: Bool?
+        var rate_limits: Limits?
+    }
+
+    private struct Limits: Decodable {
+        var five_hour: Window?
+        var seven_day: Window?
+        var model_scoped: [Scoped]?
+        var limits: [Row]?
     }
 
     private struct Window: Decodable {
-        var usedPercent: Double?
-        var windowMinutes: Int?
-        var resetsAt: String?
-        var resetDescription: String?
-        var isSyntheticPlaceholder: Bool?
+        var utilization: Double?
+        var resets_at: String?
     }
 
-    private struct Pace: Decodable {
-        var expectedUsedPercent: Double?
-        var summary: String?
+    private struct Scoped: Decodable {
+        var display_name: String?
+        var utilization: Double?
+        var resets_at: String?
     }
 
-    /// Output of `codexbar usage --provider claude --json`. A window marked as a synthetic placeholder
-    /// carries no real number, so it is reported as missing rather than as 0%.
-    static func parse(_ data: Data) -> QuotaSnapshot? {
-        guard let entry = try? JSONDecoder().decode([Entry].self, from: data).first, let usage = entry.usage else { return nil }
-        let iso = ISO8601DateFormatter()
-        func window(_ w: Window?, pace: Pace?) -> QuotaWindow? {
-            guard let w, w.isSyntheticPlaceholder != true, let used = w.usedPercent else { return nil }
-            return QuotaWindow(usedPercent: used, windowMinutes: w.windowMinutes ?? 0,
-                               resetsAt: w.resetsAt.flatMap(iso.date(from:)), resetText: w.resetDescription,
-                               expectedPercent: pace?.expectedUsedPercent, paceSummary: pace?.summary)
+    private struct Row: Decodable {
+        var kind: String?
+        var percent: Double?
+        var resets_at: String?
+    }
+
+    /// One stdout line of `claude -p --output-format stream-json`. Returns nil unless it is the
+    /// successful control response to `requestId`.
+    static func parse(line: Data, requestId: String, now: Date = Date()) -> QuotaSnapshot? {
+        guard let l = try? JSONDecoder().decode(Line.self, from: line), l.type == "control_response",
+              let outer = l.response, outer.subtype == "success", outer.request_id == requestId,
+              let body = outer.response else { return nil }
+        guard body.rate_limits_available != false, let r = body.rate_limits else {
+            return QuotaSnapshot(updatedAt: now)
         }
-        return QuotaSnapshot(fiveHour: window(usage.primary, pace: entry.pace?["primary"]),
-                             weekly: window(usage.secondary, pace: entry.pace?["secondary"]),
-                             updatedAt: usage.updatedAt.flatMap(iso.date(from:)))
+        func window(_ w: Window?, minutes: Int) -> QuotaWindow? {
+            guard let used = w?.utilization else { return nil }
+            return QuotaWindow(usedPercent: used, windowMinutes: minutes, resetsAt: w?.resets_at.flatMap(date))
+        }
+        // The server's `limits[]` rows are authoritative when the legacy fields are missing.
+        func row(_ kind: String, minutes: Int) -> QuotaWindow? {
+            guard let row = r.limits?.first(where: { $0.kind == kind }), let p = row.percent else { return nil }
+            return QuotaWindow(usedPercent: p, windowMinutes: minutes, resetsAt: row.resets_at.flatMap(date))
+        }
+        let scoped = (r.model_scoped ?? []).compactMap { s -> ScopedQuota? in
+            guard let name = s.display_name, let used = s.utilization else { return nil }
+            return ScopedQuota(name: name, window: QuotaWindow(usedPercent: used, windowMinutes: 7 * 24 * 60,
+                                                               resetsAt: s.resets_at.flatMap(date)))
+        }
+        return QuotaSnapshot(fiveHour: window(r.five_hour, minutes: 300) ?? row("session", minutes: 300),
+                             weekly: window(r.seven_day, minutes: 7 * 24 * 60) ?? row("weekly_all", minutes: 7 * 24 * 60),
+                             scoped: scoped, updatedAt: now)
     }
+
+    /// ISO 8601 with any number of fractional digits ("2026-11-12T10:59:59.842496+00:00").
+    static func date(_ s: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let d = plain.date(from: s) { return d }
+        guard let dot = s.firstIndex(of: ".") else { return nil }
+        let rest = s[s.index(after: dot)...]
+        let digits = rest.prefix { $0.isNumber }
+        let zone = rest.dropFirst(digits.count)
+        guard let whole = plain.date(from: String(s[..<dot]) + zone) else { return nil }
+        let frac = Double("0." + digits) ?? 0
+        return whole.addingTimeInterval(frac)
+    }
+}
+
+/// Runs Claude Code in print mode with stream-json I/O, sends the `get_usage` control request and
+/// returns the first matching response. No user message is sent, so no model call is made.
+enum ClaudeUsageProbe {
+    static let requestId = "ccterm-usage"
+
+    static func fetch(claude: String, timeout: TimeInterval = 40) async -> QuotaSnapshot? {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ClaudeTerm-usage")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return await withCheckedContinuation { (cont: CheckedContinuation<QuotaSnapshot?, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                // Process is not Sendable; it is created here and only touched by this block and the
+                // timeout item, which only terminates our own child.
+                nonisolated(unsafe) let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: claude)
+                proc.arguments = ["-p", "--input-format", "stream-json", "--output-format", "stream-json",
+                                  "--verbose", "--no-session-persistence"]
+                proc.currentDirectoryURL = dir
+                let input = Pipe(), output = Pipe()
+                proc.standardInput = input
+                proc.standardOutput = output
+                proc.standardError = FileHandle.nullDevice
+                do { try proc.run() } catch {
+                    cont.resume(returning: nil)
+                    return
+                }
+                let pid = proc.processIdentifier
+                let killer = DispatchWorkItem {
+                    guard proc.isRunning else { return }
+                    proc.terminate()
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if proc.isRunning { kill(pid, SIGKILL) } }
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+                let request = #"{"type":"control_request","request_id":"\#(requestId)","request":{"subtype":"get_usage"}}"# + "\n"
+                input.fileHandleForWriting.write(Data(request.utf8))
+                var buffer = Data()
+                var result: QuotaSnapshot?
+                let reader = output.fileHandleForReading
+                while result == nil {
+                    let chunk = reader.availableData
+                    if chunk.isEmpty { break }
+                    buffer.append(chunk)
+                    while let nl = buffer.firstIndex(of: 0x0A) {
+                        let line = buffer[buffer.startIndex..<nl]
+                        buffer.removeSubrange(buffer.startIndex...nl)
+                        if let snap = ClaudeUsageParser.parse(line: Data(line), requestId: requestId) {
+                            result = snap
+                            break
+                        }
+                    }
+                    if buffer.count > 4 * 1024 * 1024 { break }
+                }
+                try? input.fileHandleForWriting.close()
+                killer.cancel()
+                if proc.isRunning {
+                    proc.terminate()
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if proc.isRunning { kill(pid, SIGKILL) } }
+                }
+                cont.resume(returning: result)
+            }
+        }
+    }
+}
+
+/// One day of ccusage data, for the bar hover card.
+struct DayUsage: Equatable {
+    struct Model: Equatable {
+        var name: String
+        var cost: Double
+    }
+
+    var cost: Double
+    var inputTokens: Int
+    var outputTokens: Int
+    var cacheWriteTokens: Int
+    var cacheReadTokens: Int
+    var models: [Model]
 }
 
 /// Daily API-equivalent cost in USD, keyed by local date "yyyy-MM-dd".
 struct CostHistory: Equatable {
     var days: [String: Double]
+    /// Token and model detail per day, when ccusage has been run with --breakdown.
+    var details: [String: DayUsage] = [:]
 
     static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
         let c = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// A day ccusage scanned in full (it has detail) keeps its scanned cost. The ledger fills the
+    /// other days; a fresh today value applies only when today has no scan or the value is larger
+    /// (cost within a day only grows, so a larger fresh number is newer).
+    static func merging(scanned: CostHistory, ledger: [String: Double], today: Double?, todayKey: String) -> CostHistory {
+        var out = scanned
+        for (day, cost) in ledger where out.details[day] == nil { out.days[day] = cost }
+        if let today, today > (out.days[todayKey] ?? 0) { out.days[todayKey] = today }
+        return out
     }
 
     func monthTotal(now: Date, calendar: Calendar = .current) -> Double {
@@ -91,14 +233,43 @@ struct CostHistory: Equatable {
 }
 
 enum CostParser {
-    /// `ccusage daily --json`: {"daily": [{"date": "2026-11-01", "totalCost": 12.3}, ...]}.
-    static func ccusageDaily(_ data: Data) -> [String: Double]? {
-        struct Out: Decodable {
-            struct Day: Decodable { var date: String; var totalCost: Double }
-            var daily: [Day]
+    private struct Out: Decodable {
+        struct Breakdown: Decodable {
+            var modelName: String
+            var cost: Double
         }
+
+        struct Day: Decodable {
+            var date: String
+            var totalCost: Double
+            var inputTokens: Int?
+            var outputTokens: Int?
+            var cacheCreationTokens: Int?
+            var cacheReadTokens: Int?
+            var modelsUsed: [String]?
+            var modelBreakdowns: [Breakdown]?
+        }
+
+        var daily: [Day]
+    }
+
+    /// `ccusage daily --json [--breakdown]`: {"daily": [{"date": "2026-11-01", "totalCost": 12.3, ...}]}.
+    static func ccusageDaily(_ data: Data) -> [String: Double]? {
+        ccusageHistory(data)?.days
+    }
+
+    static func ccusageHistory(_ data: Data) -> CostHistory? {
         guard let out = try? JSONDecoder().decode(Out.self, from: data) else { return nil }
-        return Dictionary(out.daily.map { ($0.date, $0.totalCost) }, uniquingKeysWith: +)
+        var history = CostHistory(days: Dictionary(out.daily.map { ($0.date, $0.totalCost) }, uniquingKeysWith: +))
+        for d in out.daily where d.inputTokens != nil {
+            let models = (d.modelBreakdowns ?? []).map { DayUsage.Model(name: $0.modelName, cost: $0.cost) }
+                .sorted { $0.cost > $1.cost }
+            history.details[d.date] = DayUsage(
+                cost: d.totalCost, inputTokens: d.inputTokens ?? 0, outputTokens: d.outputTokens ?? 0,
+                cacheWriteTokens: d.cacheCreationTokens ?? 0, cacheReadTokens: d.cacheReadTokens ?? 0,
+                models: models.isEmpty ? (d.modelsUsed ?? []).map { DayUsage.Model(name: $0, cost: 0) } : models)
+        }
+        return history
     }
 
     /// A plain {"yyyy-MM-dd": cost} ledger, as kept by a ccusage-based status line.
@@ -158,12 +329,17 @@ enum UsageTools {
 final class UsageModel: ObservableObject {
     @Published private(set) var quota: QuotaSnapshot?
     @Published private(set) var costs: CostHistory?
-    @Published private(set) var quotaMissingTool = false
+    @Published private(set) var quotaUnavailable = false
     @Published private(set) var costMissingTool = false
     @Published private(set) var costIsRefreshing = false
 
+    private let claudePath: @Sendable () -> String?
     private var task: Task<Void, Never>?
     private var lastCostScan: Date?
+
+    init(claudePath: @escaping @Sendable () -> String? = { nil }) {
+        self.claudePath = claudePath
+    }
 
     func start() {
         guard task == nil else { return }
@@ -181,33 +357,41 @@ final class UsageModel: ObservableObject {
     }
 
     private func refreshQuota() async {
-        guard let tool = UsageTools.find("codexbar", override: "CCTERM_CODEXBAR_PATH") else {
-            quotaMissingTool = true
+        guard let claude = claudePath() else {
+            quotaUnavailable = true
             return
         }
-        quotaMissingTool = false
-        if let data = await ProcessRunner.run(tool, ["usage", "--provider", "claude", "--json"], timeout: 40),
-           let snap = CodexbarParser.parse(data) {
+        if let snap = await ClaudeUsageProbe.fetch(claude: claude) {
             quota = snap
+            quotaUnavailable = false
+        } else if quota == nil {
+            quotaUnavailable = true
         }
     }
 
-    /// Prefers a ledger a ccusage status line already keeps (no second multi-minute scan); otherwise
-    /// runs `ccusage daily` for this month at most every 30 minutes and caches the result.
+    /// Daily totals come first from a ledger a ccusage status line already keeps (instant). The
+    /// per-day token and model detail needs `ccusage daily --breakdown`, run at most every 30 minutes
+    /// and cached, because one scan takes minutes.
+    /// The status line's today cache, only while it is fresh: it is rewritten only while a status
+    /// line runs, and a stale value was seen overriding a newer scan (2026-11-07: $98.69 vs $230.65).
+    private static func freshTodayCost(maxAge: TimeInterval = 600) -> Double? {
+        let url = UsageTools.todayCacheURL
+        guard let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+              Date().timeIntervalSince(mtime) < maxAge,
+              let data = SafeFile.read(url) else { return nil }
+        return CostParser.todayCost(data)
+    }
+
     private func refreshCosts() async {
-        var days: [String: Double] = [:]
+        var history = CostHistory(days: [:])
+        if let data = SafeFile.read(UsageTools.ownCacheURL), let cached = CostParser.ccusageHistory(data) {
+            history = cached
+        }
         if let data = SafeFile.read(UsageTools.ledgerURL), let ledger = CostParser.ledger(data) {
-            days = ledger
-            if let t = SafeFile.read(UsageTools.todayCacheURL), let today = CostParser.todayCost(t) {
-                days[CostHistory.dayKey(Date())] = today
-            }
-            costs = CostHistory(days: days)
-            costMissingTool = false
-            return
+            history = CostHistory.merging(scanned: history, ledger: ledger,
+                                          today: Self.freshTodayCost(), todayKey: CostHistory.dayKey(Date()))
         }
-        if let data = SafeFile.read(UsageTools.ownCacheURL), let cached = CostParser.ccusageDaily(data) {
-            costs = CostHistory(days: cached)
-        }
+        if !history.days.isEmpty { costs = history }
         if let last = lastCostScan, Date().timeIntervalSince(last) < 30 * 60 { return }
         guard let tool = UsageTools.find("ccusage", override: "CCTERM_CCUSAGE_PATH") else {
             costMissingTool = costs == nil
@@ -219,10 +403,14 @@ final class UsageModel: ObservableObject {
         let since = String(CostHistory.dayKey(Calendar.current.date(byAdding: .day, value: -29, to: Date()) ?? Date())
             .replacingOccurrences(of: "-", with: ""))
         // ccusage is a bun/node script: run it through env so its interpreter is found on the search path.
-        guard let data = await ProcessRunner.run("/usr/bin/env", ["PATH=\(UsageTools.searchPath)", tool, "daily", "--json", "--since", since],
-                                                 timeout: 300),
-              let parsed = CostParser.ccusageDaily(data) else { return }
-        costs = CostHistory(days: parsed)
+        guard let data = await ProcessRunner.run("/usr/bin/env",
+                                                 ["PATH=\(UsageTools.searchPath)", tool, "daily", "--json", "--breakdown", "--since", since],
+                                                 timeout: 600),
+              let parsed = CostParser.ccusageHistory(data) else { return }
+        var merged = parsed
+        merged.days.merge(history.days) { scanned, _ in scanned }
+        merged.details.merge(history.details) { scanned, _ in scanned }
+        costs = merged
         try? FileManager.default.createDirectory(at: UsageTools.ownCacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: UsageTools.ownCacheURL, options: .atomic)
     }

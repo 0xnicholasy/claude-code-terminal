@@ -109,3 +109,44 @@ struct TakeoverTests {
         #expect(sessions.count == 2)
     }
 }
+
+@MainActor
+struct NavigationTests {
+    func dirs(_ n: Int) throws -> [String] {
+        try (0..<n).map { i in
+            let d = FileManager.default.temporaryDirectory.appendingPathComponent("ccterm-test/nav-\(UUID().uuidString)-\(i)")
+            try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+            return d.path
+        }
+    }
+
+    @Test func numberAndCycleShortcutsMoveBetweenPanes() throws {
+        let m = WorkspaceModel(store: nil, claudePath: { "/usr/bin/claude-fake" })
+        for d in try dirs(3) { m.newSession(cwd: d) }
+        let ids = m.panes.map(\.id)
+        m.selectPane(number: 1)
+        #expect(m.selectedID == ids[0])
+        m.selectPane(number: 9) // last pane
+        #expect(m.selectedID == ids[2])
+        m.selectPane(number: 5) // no fifth pane: unchanged
+        #expect(m.selectedID == ids[2])
+        m.cyclePane(by: 1) // wraps
+        #expect(m.selectedID == ids[0])
+        m.cyclePane(by: -1)
+        #expect(m.selectedID == ids[2])
+        m.tab = .usage
+        m.cyclePane(by: 1)
+        #expect(m.tab == .sessions)
+    }
+
+    @Test func newSessionInCurrentProjectUsesTheSelectedPaneFolder() throws {
+        let m = WorkspaceModel(store: nil, claudePath: { "/usr/bin/claude-fake" })
+        m.newSessionInCurrentProject()
+        #expect(m.panes.isEmpty && m.notice != nil)
+        let d = try dirs(1)[0]
+        m.newSession(cwd: d)
+        m.newSessionInCurrentProject()
+        #expect(m.panes.count == 2)
+        #expect(m.panes.allSatisfy { $0.cwd == d })
+    }
+}

@@ -19,9 +19,20 @@ A native macOS terminal for running many Claude Code sessions. It comes with `cc
 |---|---|
 | Sidebar sections: *Needs you*, *Open here*, *Elsewhere*, *Asleep* | Session index with memory and CPU per process tree |
 | Memory bar per session, totals in the toolbar | Moves unfocused idle sessions to background priority |
-| Usage tab: quota and cost (CodexBar, ccusage) | Hibernates sessions idle for 30 min, resumes them on click |
+| 5-hour and weekly quota in the toolbar, from Claude Code | Hibernates sessions idle for 30 min, resumes them on click |
 | Right-click: pin, hibernate, reveal, copy resume command | Read-only unless started with `--govern` |
-| Layout restored on launch, panes start lazily | Checks a process's identity before signalling it |
+| Usage tab: daily cost; hover a day for tokens and models (ccusage) | Checks a process's identity before signalling it |
+
+## Shortcuts
+
+| Keys | Action |
+|---|---|
+| Cmd-1 ... Cmd-8, Cmd-9 | Pane 1 to 8, last pane |
+| Ctrl-Tab, Cmd-Shift-] / [ | Next / previous pane |
+| Cmd-Option-Down / Up | Next / previous session in the sidebar |
+| Cmd-Ctrl-1 / 2, Cmd-Shift-U | Sessions / Usage tab |
+| Cmd-N, Cmd-Shift-N | New session, new session in this project |
+| Cmd-Shift-W, Cmd-Ctrl-S | Close pane, toggle sidebar |
 
 ## Performance
 

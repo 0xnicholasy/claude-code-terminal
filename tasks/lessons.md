@@ -14,3 +14,5 @@
 - `scripts/fleet.sh pids` prints `pid uuid dir` rows; take column 1 before building `--allow-pids`, or the daemon refuses the allowlist and does nothing.
 - A pid-reuse check on a descendant is incomplete unless the root itself is revalidated: a reused root pid makes the parent-chain check vouch for a stranger's children.
 - Never write an image pipeline's output over its own source file; write to a scratch path, inspect, then copy. (The icon master was overwritten with a black tile once and had to be restored from git.)
+- Never pipe `scripts/fleet.sh start` into `tail`/`head`: its backgrounded subshells hold the pipe open, so the pipeline never ends. Run it unpiped.
+- Ghostty keybind names are not guessable (`super+shift+[`, `super+digit_1`, `super+alt+arrow_up`). Copy them from `ghostty +list-keybinds --default` before unbinding, then verify each shortcut live.

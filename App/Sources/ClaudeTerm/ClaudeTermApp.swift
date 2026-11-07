@@ -5,19 +5,24 @@ import SwiftUI
 @main
 struct ClaudeTermApp: App {
     @StateObject private var model = Bootstrap.makeModel()
+    @StateObject private var usage = Bootstrap.makeUsage()
 
     var body: some Scene {
         Window("ClaudeTerm", id: "main") {
-            ContentView(model: model)
+            ContentView(model: model, usage: usage)
                 .frame(minWidth: 760, minHeight: 480)
                 .task { Bootstrap.start(model) }
         }
         .commands {
+            SidebarCommands()
             CommandGroup(replacing: .newItem) {
                 Button("New Session...") {
                     if let cwd = DirectoryPicker.choose() { model.newSession(cwd: cwd) }
                 }
                 .keyboardShortcut("n")
+                Button("New Session in This Project") { model.newSessionInCurrentProject() }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(model.selectedID == nil)
             }
             CommandGroup(after: .newItem) {
                 Button("Close Pane") {
@@ -25,6 +30,43 @@ struct ClaudeTermApp: App {
                 }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
                 .disabled(model.selectedID == nil)
+            }
+            NavigationCommands(model: model)
+        }
+    }
+}
+
+/// Go menu: every way to move between panes, sessions and tabs from the keyboard.
+struct NavigationCommands: Commands {
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some Commands {
+        CommandMenu("Go") {
+            Button("Sessions") { model.tab = .sessions }
+                .keyboardShortcut("1", modifiers: [.command, .control])
+            Button("Usage") { model.tab = .usage }
+                .keyboardShortcut("2", modifiers: [.command, .control])
+            Button("Toggle Sessions / Usage") { model.tab = model.tab == .usage ? .sessions : .usage }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+            Divider()
+            Button("Next Pane") { model.cyclePane(by: 1) }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+            Button("Previous Pane") { model.cyclePane(by: -1) }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+            Button("Next Pane (Ctrl-Tab)") { model.cyclePane(by: 1) }
+                .keyboardShortcut(.tab, modifiers: [.control])
+            Button("Previous Pane (Ctrl-Shift-Tab)") { model.cyclePane(by: -1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+            Divider()
+            Button("Next Session in Sidebar") { model.cycleSession(by: 1) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            Button("Previous Session in Sidebar") { model.cycleSession(by: -1) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            Divider()
+            ForEach(1...9, id: \.self) { n in
+                Button(n == 9 ? "Last Pane" : "Pane \(n)") { model.selectPane(number: n) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+                    .disabled(n != 9 && n > model.panes.count || model.panes.isEmpty)
             }
         }
     }
@@ -56,6 +98,12 @@ enum Bootstrap {
     }
 
     static let claude = ClaudeBinary()
+
+    static func makeUsage() -> UsageModel {
+        if isUnderTest { return UsageModel() }
+        let binary = claude
+        return UsageModel(claudePath: { binary.get() })
+    }
 
     static func makeModel() -> WorkspaceModel {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }

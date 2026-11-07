@@ -55,6 +55,18 @@ enum SidebarLayout {
     }
 
     /// Project shown next to the name only when it adds information.
+    /// Every session in the order the sidebar shows it, project children in place.
+    static func order(_ rows: [SessionInfo]) -> [SessionInfo] {
+        sections(rows).flatMap { section in
+            section.entries.flatMap { entry -> [SessionInfo] in
+                switch entry {
+                case let .session(s): [s]
+                case let .project(_, _, sessions): sessions
+                }
+            }
+        }
+    }
+
     static func secondaryText(_ s: SessionInfo) -> String? {
         let project = projectName(s.cwd)
         let name = SessionGrouping.displayName(s)
@@ -143,6 +155,34 @@ enum Formatting {
         if minutes < 60 { return "\(max(1, minutes)) m" }
         if minutes < 60 * 24 { return "\(minutes / 60) h" }
         return "\(minutes / (60 * 24)) d"
+    }
+
+    static func dollars(_ v: Double) -> String { v.formatted(.currency(code: "USD")) }
+
+    /// 12_345 -> "12.3K", 2_631_338 -> "2.6M".
+    static func tokens(_ n: Int) -> String {
+        let d = Double(n)
+        if d >= 1_000_000_000 { return String(format: "%.1fB", d / 1_000_000_000) }
+        if d >= 1_000_000 { return String(format: "%.1fM", d / 1_000_000) }
+        if d >= 1000 { return String(format: "%.1fK", d / 1000) }
+        return "\(n)"
+    }
+
+    /// "claude-opus-5-5" -> "Opus 5.5". Unknown shapes pass through unchanged.
+    static func modelName(_ id: String) -> String {
+        let parts = id.split(separator: "-")
+        guard parts.count >= 3, parts[0] == "claude" else { return id }
+        let family = parts[1].prefix(1).uppercased() + parts[1].dropFirst()
+        let version = parts.dropFirst(2).prefix { $0.allSatisfy(\.isNumber) && $0.count <= 2 }.joined(separator: ".")
+        return version.isEmpty ? family : "\(family) \(version)"
+    }
+
+    /// "2026-11-07" -> "Sat, 7 Nov" in the user's locale.
+    static func dayTitle(_ key: String) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: key) else { return key }
+        return d.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 
     static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {

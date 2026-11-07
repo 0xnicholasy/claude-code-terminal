@@ -41,7 +41,14 @@ final class Pane: ObservableObject, Identifiable {
     /// `super+q=quit` keybind makes a focused surface swallow Cmd-Q, and this host does not handle
     /// the quit action, so Cmd-Q never reached the app menu (seen live 2026-11-07). Unbind it so
     /// the standard Quit menu item handles it.
-    static let sharedController = TerminalController { $0.withCustom("keybind", "super+q=unbind") }
+    /// The same applies to Ghostty's tab and split keybinds, which would swallow the app's Go menu.
+    /// Names as `ghostty +list-keybinds --default` prints them (Ghostty 1.x).
+    static let unboundKeys = ["super+q", "super+n", "super+shift+w", "ctrl+tab", "ctrl+shift+tab",
+                              "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down"]
+        + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
+    static let sharedController = TerminalController { config in
+        for key in unboundKeys { config.withCustom("keybind", "\(key)=unbind") }
+    }
 
     /// Creates the libghostty surface state on first use. Only called from a view for a launched pane.
     func viewState() -> TerminalViewState? {
@@ -70,6 +77,7 @@ final class WorkspaceModel: ObservableObject {
     /// True while sessions come from the ccgovd socket; false while polling `claude agents --json`.
     @Published var daemonConnected = false
     @Published private(set) var freed = FreedTracker()
+    @Published var tab: DetailTab = .sessions
 
     var windowFrame: LayoutFrame? {
         didSet { if windowFrame != oldValue { persist() } }
@@ -253,6 +261,46 @@ final class WorkspaceModel: ObservableObject {
             selectedID = nil
         }
         persist()
+    }
+
+    // MARK: Keyboard navigation
+
+    /// Cmd-1 ... Cmd-9: the Nth open pane; Cmd-9 is always the last one, as in browsers.
+    func selectPane(number n: Int) {
+        guard !panes.isEmpty, n >= 1 else { return }
+        let idx = n == 9 ? panes.count - 1 : n - 1
+        guard idx < panes.count else { return }
+        tab = .sessions
+        select(panes[idx].id)
+    }
+
+    /// Next or previous open pane, wrapping around.
+    func cyclePane(by step: Int) {
+        guard !panes.isEmpty else { return }
+        let cur = panes.firstIndex { $0.id == selectedID } ?? (step > 0 ? -1 : 0)
+        let next = ((cur + step) % panes.count + panes.count) % panes.count
+        tab = .sessions
+        select(panes[next].id)
+    }
+
+    /// Next or previous row in sidebar order (all sessions, not only open panes), wrapping around.
+    /// Opening a row follows the click rules, so a session live elsewhere shows its notice.
+    func cycleSession(by step: Int) {
+        let order = SidebarLayout.order(rows)
+        guard !order.isEmpty else { return }
+        let cur = order.firstIndex { $0.sessionId == selectedID } ?? (step > 0 ? -1 : 0)
+        let next = ((cur + step) % order.count + order.count) % order.count
+        tab = .sessions
+        open(order[next])
+    }
+
+    /// Cmd-Shift-N: another session in the selected pane's project.
+    func newSessionInCurrentProject() {
+        guard let cwd = selectedSession?.cwd, !cwd.isEmpty else {
+            notice = "Select a pane first: the new session starts in its project folder."
+            return
+        }
+        newSession(cwd: cwd)
     }
 
     func close(_ id: String) {
