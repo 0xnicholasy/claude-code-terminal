@@ -70,11 +70,13 @@ public final class SignalGate {
     public let allowPids: Set<Int32>?
     public let scopeCwdPrefix: String?
     public let rootComm: String
+    public let ownUid: uid_t
     public var log: (String) -> Void
 
     public init(sender: SignalSender, table: ProcessTable, selfPid: Int32 = getpid(),
                 allowPids: Set<Int32>? = nil, scopeCwdPrefix: String? = nil,
-                rootComm: String = "claude", log: @escaping (String) -> Void = { _ in }) {
+                rootComm: String = "claude", ownUid: uid_t = getuid(), log: @escaping (String) -> Void = { _ in }) {
+        self.ownUid = ownUid
         self.sender = sender
         self.table = table
         self.selfPid = selfPid
@@ -111,7 +113,10 @@ public final class SignalGate {
         return parts.count >= 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 
-    public func check(pid: Int32, target: GovernTarget, current: [ProcessRecord]) -> GateDecision {
+    /// `orphanOK`: SIGKILL escalation during hibernate. When claude exits on SIGTERM, a child that ignored it
+    /// is reparented to launchd, so the parent-chain check can no longer pass; the pid + recorded start time
+    /// identity (taken from the same tree before SIGTERM) still proves it is the same process.
+    public func check(pid: Int32, target: GovernTarget, current: [ProcessRecord], orphanOK: Bool = false) -> GateDecision {
         guard pid > 1 else { return .refuse("pid \(pid) <= 1") }
         guard pid != selfPid else { return .refuse("pid is the daemon itself") }
         guard let recorded = target.recordedStartTimes[pid], target.pids.contains(pid) else {
@@ -127,6 +132,7 @@ public final class SignalGate {
         for r in current { byPid[r.pid] = r }
         guard let now = byPid[pid] else { return .refuse("pid \(pid) no longer exists") }
         guard now.startTime == recorded else { return .refuse("pid \(pid) start time changed (pid reused)") }
+        guard now.uid == ownUid else { return .refuse("pid \(pid) is owned by uid \(now.uid), not \(ownUid)") }
         if pid == target.rootPid {
             guard Self.isClaudeComm(now.comm, expected: rootComm) else { return .refuse("root pid \(pid) comm '\(now.comm)' != '\(rootComm)'") }
         } else {
@@ -137,14 +143,15 @@ public final class SignalGate {
                 cur = parent
                 hops += 1
             }
-            guard reached else { return .refuse("pid \(pid) is not a descendant of root \(target.rootPid)") }
+            guard reached || orphanOK else { return .refuse("pid \(pid) is not a descendant of root \(target.rootPid)") }
         }
         return .allow
     }
 
     @discardableResult
     public func kill(pid: Int32, signal: Int32, target: GovernTarget) -> Bool {
-        if case .refuse(let why) = check(pid: pid, target: target, current: table.snapshot()) {
+        let orphanOK = signal == SIGKILL
+        if case .refuse(let why) = check(pid: pid, target: target, current: table.snapshot(), orphanOK: orphanOK) {
             log("gate refused kill(\(pid), \(signal)): \(why)")
             return false
         }

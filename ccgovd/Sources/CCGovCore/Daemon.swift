@@ -89,6 +89,11 @@ public final class Daemon {
         q.sync { cycle(); return snapshot }
     }
 
+    /// Index only, no policy: the in-process fallback for a single CLI action must touch only that session.
+    public func indexOnce() {
+        q.sync { snapshot = index.poll(focused: focused, owned: owned) }
+    }
+
     /// Index + metrics only (no governing, no socket): the in-process `ccgovd status`.
     public func statusOnce() -> IndexSnapshot {
         q.sync {

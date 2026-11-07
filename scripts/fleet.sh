@@ -49,7 +49,8 @@ case "${1:-}" in
     while read -r u d w; do
       p=$(claude_pid_for "$u")
       if [ -n "$p" ]; then for q in $(tree "$p"); do kill "$q" 2>/dev/null || true; done; fi
-      kill "$w" 2>/dev/null || true
+      # Identity check: the recorded pid may have been reused; only kill it if it still runs this session.
+      if ps -o command= -p "$w" 2>/dev/null | grep -qF -- "$u"; then kill "$w" 2>/dev/null || true; fi
     done < "$STATE"
     mv "$STATE" "$STATE.done.$(date +%s)" ;;
   *) echo "usage: $0 start N | pids | rss | stop" >&2; exit 2 ;;

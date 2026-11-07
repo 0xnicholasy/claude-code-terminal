@@ -48,6 +48,7 @@ enum Bootstrap {
         // ccgovd socket when the daemon is up; `claude agents --json` polling otherwise.
         model.consume(PreferDaemonSource.live(claude: claude) { mode in
             NSLog("ClaudeTerm session source: %@", mode == .daemon ? "ccgovd socket" : "claude agents polling")
+            if mode == .daemon { Task { @MainActor in model.resyncDaemon() } }
         })
     }
 }

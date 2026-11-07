@@ -103,8 +103,10 @@ public final class SessionIndex {
                     row.pidStartTime = st // start time recorded at first sight; a mismatch later means pid reuse
                 } else {
                     row.pidStartTime = rec.startTime
-                    row.demoted = false
                 }
+                // Kernel state, not the stored flag: a row rebuilt after the session briefly left the index
+                // (or after a daemon restart) must still know the tree is backgrounded so policy restores it.
+                row.demoted = rec.background
                 row.pid = pid
                 if let tree = ProcessTree.stats(root: pid, table: procs) {
                     rss = tree.rssBytes

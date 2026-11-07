@@ -62,6 +62,18 @@ struct DaemonNotifyTests {
         #expect(sent.prefix(2) == ["detach:b", "unfocus:b"])
         #expect(sent.contains("focus:a"))
     }
+
+    @Test func resyncAfterDaemonRestartReattachesAllPanesAndRefocusesSelection() {
+        var sent: [String] = []
+        let m = WorkspaceModel(store: nil, claudePath: { "/usr/bin/claude-fake" },
+                               notify: { cmd, id in sent.append("\(cmd.rawValue):\(id.prefix(1))") })
+        let dir = FileManager.default.temporaryDirectory.path
+        m.open(SessionInfo(sessionId: a, cwd: dir, kind: .hibernated, state: .hibernated))
+        m.open(SessionInfo(sessionId: b, cwd: dir, kind: .hibernated, state: .hibernated))
+        sent.removeAll()
+        m.resyncDaemon()
+        #expect(sent == ["attach:a", "attach:b", "focus:b"])
+    }
 }
 
 /// macOS 14 target: Synchronization.Mutex needs 15, so a small NSLock box.

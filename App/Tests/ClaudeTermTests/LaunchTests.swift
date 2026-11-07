@@ -30,10 +30,17 @@ struct LaunchTests {
     }
 
     @Test func refusesExecutablePathsThatCannotBeExpressedWithoutAShell() {
-        for exe in ["claude", "/Users/a b/claude", "/tmp/x;rm", "/tmp/$(x)/claude", "/tmp/it's/claude"] {
+        for exe in ["claude", "/Users/a b/claude", "/tmp/x;rm", "/tmp/$(x)/claude", "/tmp/it's/claude",
+                    "/x/{a,b}/claude", "/x/~/claude", "/x/[ab]/claude", "/x/#/claude", "/x/a=b/claude"] {
             #expect(throws: LaunchError.unsupportedExecutablePath) {
                 try ClaudeCommand.resume(id: id, cwd: "/tmp", executable: exe)
             }
+        }
+    }
+
+    @Test func acceptsOrdinaryInstallPaths() throws {
+        for exe in ["/Users/hotingyuen/.local/bin/claude", "/opt/homebrew/bin/claude", "/x/versions/2.1.319", "/a/b@c+d-e_f/claude"] {
+            #expect(try ClaudeCommand.resume(id: id, cwd: "/tmp", executable: exe).executable == exe)
         }
     }
 

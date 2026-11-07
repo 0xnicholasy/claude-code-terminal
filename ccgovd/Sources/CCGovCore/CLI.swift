@@ -211,7 +211,7 @@ public enum CLI {
             }
             let store = try SessionStore(path: cfg.dbPath)
             let daemon = makeDaemon(cfg, store: store)
-            _ = daemon.runCycle()
+            daemon.indexOnce() // not runCycle(): the policy would act on every other in-scope session too
             resp = daemon.handle(req, client: nil)
         }
         if !resp.ok {

@@ -133,6 +133,10 @@ public final class SocketServer {
             guard getpeereid(c, &uid, &gid) == 0, uid == getuid() else { close(c); continue }
             var one: Int32 = 1
             setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+            // A subscriber that stops reading must not block the daemon's state queue: writes time out
+            // after 1 s, send() returns false, and broadcast() drops the subscriber.
+            var tv = timeval(tv_sec: 1, tv_usec: 0)
+            setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
             let handle = ClientHandle(fd: c)
             Thread.detachNewThread { [weak self] in self?.serve(handle) }
         }

@@ -41,6 +41,16 @@ final class DaemonConnection: @unchecked Sendable {
         return DaemonConnection(fd: fd)
     }
 
+    /// Bounded blocking for one-shot requests; a busy or wedged daemon cannot stall the caller forever.
+    func setTimeouts(seconds: Int) {
+        var tv = timeval(tv_sec: seconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    }
+
+    /// Unblocks a reader thread parked in read(); the fd itself is closed in deinit.
+    func shutdownBoth() { Darwin.shutdown(fd, SHUT_RDWR) }
+
     func send(_ request: Request) -> Bool {
         guard let data = try? WireLine.encode(request) else { return false }
         return data.withUnsafeBytes { raw in
@@ -95,6 +105,8 @@ struct DaemonSocketSource: SessionSource {
                 }
                 continuation.finish()
             }
+            // Consumer gone: shut the socket so the reader thread returns and the fd is released.
+            continuation.onTermination = { _ in conn.shutdownBoth() }
             thread.start()
         }
     }
@@ -153,6 +165,7 @@ enum DaemonNotifier {
         guard SessionID.isValid(sessionId) else { return }
         queue.async {
             guard let conn = DaemonConnection.connect() else { return }
+            conn.setTimeouts(seconds: 2)
             _ = conn.send(Request(id: "app-\(cmd.rawValue)", cmd: cmd, sessionId: sessionId))
             _ = conn.readLine()
         }

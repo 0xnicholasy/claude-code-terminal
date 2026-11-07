@@ -111,11 +111,29 @@ public struct ClaudeAgentsRunner: AgentsRunner {
         proc.standardError = FileHandle.nullDevice
         proc.standardInput = FileHandle.nullDevice
         try proc.run()
-        let timer = DispatchWorkItem { if proc.isRunning { proc.terminate() } }
+        let pid = proc.processIdentifier
+        let timer = DispatchWorkItem {
+            guard proc.isRunning else { return }
+            proc.terminate()
+            // Our own child: escalate if it ignores SIGTERM, so the pipe read below always returns.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if proc.isRunning { Darwin.kill(pid, SIGKILL) } }
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds, execute: timer)
-        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let cap = 8 * 1024 * 1024
+        var data = Data()
+        let fh = out.fileHandleForReading
+        while true {
+            let chunk = fh.availableData
+            if chunk.isEmpty { break }
+            data.append(chunk)
+            if data.count > cap {
+                proc.terminate()
+                break
+            }
+        }
         proc.waitUntilExit()
         timer.cancel()
+        guard data.count <= cap else { throw AgentsRunError(description: "claude agents --json output over \(cap) bytes") }
         guard proc.terminationStatus == 0 else {
             throw AgentsRunError(description: "claude agents --json exited \(proc.terminationStatus)")
         }

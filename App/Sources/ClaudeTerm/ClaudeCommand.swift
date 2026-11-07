@@ -35,10 +35,10 @@ enum ClaudeCommand {
     private static func make(_ flags: [String], id: String, cwd: String, executable: String) throws -> LaunchSpec {
         guard SessionID.isValid(id) else { throw LaunchError.invalidSessionID }
         guard cwd.hasPrefix("/"), !cwd.contains("\0"), !cwd.contains("\n") else { throw LaunchError.invalidCwd }
-        // The exec backend splits the command on whitespace, so a path with whitespace or quoting
-        // characters cannot be expressed safely; refuse it rather than escape it.
-        let unsafe = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "'\"\\$`;&|<>()*?"))
-        guard executable.hasPrefix("/"), executable.rangeOfCharacter(from: unsafe) == nil else {
+        // libghostty shell-parses the command (bash -c "exec -l ..."), so the path may only use characters
+        // that are inert in bash: an allowlist, not a denylist (braces, tildes, globs all expand).
+        let inert = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/+@-")
+        guard executable.hasPrefix("/"), executable.unicodeScalars.allSatisfy({ inert.contains($0) }) else {
             throw LaunchError.unsupportedExecutablePath
         }
         return LaunchSpec(executable: executable, arguments: flags, cwd: cwd)

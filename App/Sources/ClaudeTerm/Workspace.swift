@@ -109,6 +109,13 @@ final class WorkspaceModel: ObservableObject {
 
     func apply(sessions list: [SessionInfo]) { sessions = list }
 
+    /// ccgovd keeps focus and ownership in memory only. After it (re)starts, tell it again which panes
+    /// this app owns and which one is focused, so a visible pane is never governed as unfocused.
+    func resyncDaemon() {
+        for pane in panes { notify(.attach, pane.id) }
+        if let sel = selectedID { notify(.focus, sel) }
+    }
+
     func consume(_ source: SessionSource) {
         sourceTask?.cancel()
         sourceTask = Task { [weak self] in

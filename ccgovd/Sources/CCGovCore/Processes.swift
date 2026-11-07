@@ -10,14 +10,21 @@ public struct ProcessRecord: Equatable {
     public var rssBytes: UInt64
     /// User + system CPU time in nanoseconds.
     public var cpuNs: UInt64
+    /// Real uid of the process owner. The gate only signals processes owned by the daemon's uid.
+    public var uid: uid_t
+    /// Kernel PRIO_DARWIN_BG state (PROC_FLAG_DARWINBG / EXT_DARWINBG), the source of truth for "demoted".
+    public var background: Bool
 
-    public init(pid: Int32, ppid: Int32, startTime: UInt64, comm: String, rssBytes: UInt64 = 0, cpuNs: UInt64 = 0) {
+    public init(pid: Int32, ppid: Int32, startTime: UInt64, comm: String, rssBytes: UInt64 = 0, cpuNs: UInt64 = 0,
+                uid: uid_t = getuid(), background: Bool = false) {
         self.pid = pid
         self.ppid = ppid
         self.startTime = startTime
         self.comm = comm
         self.rssBytes = rssBytes
         self.cpuNs = cpuNs
+        self.uid = uid
+        self.background = background
     }
 }
 
@@ -73,8 +80,10 @@ public struct DarwinProcessTable: ProcessTable {
                     $0.withMemoryRebound(to: CChar.self, capacity: 16) { String(cString: $0) }
                 }
             }
+            let bgFlags: UInt32 = 0x8000 | 0x10000 // PROC_FLAG_DARWINBG | PROC_FLAG_EXT_DARWINBG
             out.append(ProcessRecord(pid: pid, ppid: Int32(bsd.pbi_ppid), startTime: start,
-                                     comm: name, rssBytes: rss, cpuNs: cpuNs))
+                                     comm: name, rssBytes: rss, cpuNs: cpuNs,
+                                     uid: bsd.pbi_ruid, background: bsd.pbi_flags & bgFlags != 0))
         }
         return out
     }
