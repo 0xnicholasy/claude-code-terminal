@@ -35,7 +35,8 @@ enum Bootstrap {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }
         InheritedSessionEnv.scrubProcessEnvironment()
         let binary = claude
-        let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() })
+        let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() },
+                                   notify: { DaemonNotifier.send($0, sessionId: $1) })
         // Restore before any window exists: window frame callbacks persist the layout, and a
         // persist that ran first would overwrite the saved file with an empty one.
         model.restore()
@@ -44,6 +45,9 @@ enum Bootstrap {
 
     static func start(_ model: WorkspaceModel) {
         guard !isUnderTest else { return }
-        model.consume(AgentsPollingSource(claude: claude))
+        // ccgovd socket when the daemon is up; `claude agents --json` polling otherwise.
+        model.consume(PreferDaemonSource.live(claude: claude) { mode in
+            NSLog("ClaudeTerm session source: %@", mode == .daemon ? "ccgovd socket" : "claude agents polling")
+        })
     }
 }

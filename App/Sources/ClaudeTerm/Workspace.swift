@@ -74,11 +74,15 @@ final class WorkspaceModel: ObservableObject {
 
     private let store: LayoutStore?
     private let claudePath: @Sendable () -> String?
+    /// Tells ccgovd about pane focus and ownership (`DaemonNotifier.send` in the app, no-op in tests).
+    private let notify: (Command, String) -> Void
     private var sourceTask: Task<Void, Never>?
 
-    init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?) {
+    init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
+         notify: @escaping (Command, String) -> Void = { _, _ in }) {
         self.store = store
         self.claudePath = claudePath
+        self.notify = notify
     }
 
     // MARK: Sidebar data
@@ -155,7 +159,9 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func select(_ id: String?) {
+        if let previous = selectedID, previous != id { notify(.unfocus, previous) }
         if let id, let pane = panes.first(where: { $0.id == id }) {
+            notify(.focus, id)
             selectedID = id
             launchIfNeeded(pane)
         } else {
@@ -167,9 +173,14 @@ final class WorkspaceModel: ObservableObject {
     func close(_ id: String) {
         guard let idx = panes.firstIndex(where: { $0.id == id }) else { return }
         panes.remove(at: idx)
-        if selectedID == id { selectedID = panes.last?.id }
-        if let sel = selectedID, let pane = panes.first(where: { $0.id == sel }) { launchIfNeeded(pane) }
-        persist()
+        notify(.detach, id)
+        guard selectedID == id else {
+            persist()
+            return
+        }
+        notify(.unfocus, id)
+        selectedID = nil
+        select(panes.last?.id) // notifies focus, launches lazily, persists
     }
 
     /// Restore panes from the layout file as placeholders. Only the selected pane launches.
@@ -200,6 +211,7 @@ final class WorkspaceModel: ObservableObject {
 
     private func makePane(sessionId: String, cwd: String, title: String, origin: Pane.Origin) -> Pane {
         let pane = Pane(sessionId: sessionId, cwd: cwd, title: title, origin: origin)
+        notify(.attach, sessionId)
         pane.onChange = { [weak self] in
             self?.objectWillChange.send()
         }
