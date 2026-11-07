@@ -67,6 +67,9 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var selectedID: String?
     @Published private(set) var sessions: [SessionInfo] = []
     @Published var notice: String?
+    /// True while sessions come from the ccgovd socket; false while polling `claude agents --json`.
+    @Published var daemonConnected = false
+    @Published private(set) var freed = FreedTracker()
 
     var windowFrame: LayoutFrame? {
         didSet { if windowFrame != oldValue { persist() } }
@@ -76,13 +79,17 @@ final class WorkspaceModel: ObservableObject {
     private let claudePath: @Sendable () -> String?
     /// Tells ccgovd about pane focus and ownership (`DaemonNotifier.send` in the app, no-op in tests).
     private let notify: (Command, String) -> Void
+    /// Request/response call to ccgovd (`DaemonClient.request` in the app, nil in tests by default).
+    private let request: (Command, String) async -> Response?
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
-         notify: @escaping (Command, String) -> Void = { _, _ in }) {
+         notify: @escaping (Command, String) -> Void = { _, _ in },
+         request: @escaping (Command, String) async -> Response? = { _, _ in nil }) {
         self.store = store
         self.claudePath = claudePath
         self.notify = notify
+        self.request = request
     }
 
     // MARK: Sidebar data
@@ -107,7 +114,45 @@ final class WorkspaceModel: ObservableObject {
 
     var groups: [ProjectGroup] { SessionGrouping.group(rows) }
 
-    func apply(sessions list: [SessionInfo]) { sessions = list }
+    func apply(sessions list: [SessionInfo]) {
+        freed.update(list)
+        sessions = list
+    }
+
+    var summary: MemorySummary { MemorySummary(rows: rows, freedBytes: freed.freedBytes) }
+
+    var selectedSession: SessionInfo? {
+        guard let id = selectedID else { return nil }
+        return rows.first { $0.sessionId == id }
+    }
+
+    // MARK: Row actions (docs/design.md step 5)
+
+    /// Shell line that resumes the session in its folder, for the clipboard.
+    func resumeCommandLine(_ s: SessionInfo) -> String? {
+        ResumeCommand.make(sessionId: s.sessionId, cwd: s.cwd, claude: claudePath() ?? "claude")?.shellLine
+    }
+
+    func setPinned(_ s: SessionInfo, _ on: Bool) async {
+        await daemonAction(on ? .pin : .unpin, s, done: on ? "Pinned: it will not be hibernated." : "Unpinned.")
+    }
+
+    func hibernateNow(_ s: SessionInfo) async {
+        await daemonAction(.hibernate, s, done: "Hibernated.")
+    }
+
+    private func daemonAction(_ cmd: Command, _ s: SessionInfo, done: String) async {
+        guard daemonConnected else {
+            notice = "This needs the ccgovd daemon, which is not running."
+            return
+        }
+        guard let resp = await request(cmd, s.sessionId) else {
+            notice = "ccgovd did not answer."
+            return
+        }
+        let name = SessionGrouping.displayName(s)
+        notice = resp.ok ? "\(name): \(done)" : "\(name): \(resp.error ?? "ccgovd refused the request.")"
+    }
 
     /// ccgovd keeps focus and ownership in memory only. After it (re)starts, tell it again which panes
     /// this app owns and which one is focused, so a visible pane is never governed as unfocused.

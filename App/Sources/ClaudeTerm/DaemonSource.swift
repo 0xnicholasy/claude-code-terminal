@@ -171,3 +171,19 @@ enum DaemonNotifier {
         }
     }
 }
+
+enum DaemonClient {
+    /// One request on a fresh connection; nil when the daemon is down or does not answer within 5 s.
+    static func request(_ cmd: Command, sessionId: String) async -> Response? {
+        guard SessionID.isValid(sessionId) else { return nil }
+        return await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let conn = DaemonConnection.connect() else { return cont.resume(returning: nil) }
+                conn.setTimeouts(seconds: 5)
+                guard conn.send(Request(id: "app-\(cmd.rawValue)", cmd: cmd, sessionId: sessionId)),
+                      let line = conn.readLine() else { return cont.resume(returning: nil) }
+                cont.resume(returning: try? WireLine.decode(Response.self, from: line))
+            }
+        }
+    }
+}

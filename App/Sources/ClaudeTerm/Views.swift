@@ -9,54 +9,100 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(model: model)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 290)
         } detail: {
-            PaneArea(model: model)
+            VStack(spacing: 0) {
+                PaneArea(model: model)
+                if let session = model.selectedSession { PaneStatusStrip(session: session) }
+            }
+            .overlay(alignment: .top) { NoticeBanner(model: model) }
         }
+        .navigationTitle("")
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                MemorySummaryView(summary: model.summary, daemonConnected: model.daemonConnected)
+            }
             ToolbarItem {
                 Button {
                     if let cwd = DirectoryPicker.choose() { model.newSession(cwd: cwd) }
                 } label: {
                     Label("New Session", systemImage: "plus")
                 }
-            }
-            ToolbarItem {
-                Button {
-                    if let id = model.selectedID { model.close(id) }
-                } label: {
-                    Label("Close Pane", systemImage: "xmark")
-                }
-                .disabled(model.selectedID == nil)
+                .help("New session in folder (Cmd-N)")
             }
         }
         .background(WindowFrameReader(initial: model.windowFrameForRestore) { model.windowFrame = $0 })
-        .alert("ClaudeTerm", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
-            Button("OK") { model.notice = nil }
-        } message: {
-            Text(model.notice ?? "")
+    }
+}
+
+// MARK: Toolbar
+
+struct MemorySummaryView: View {
+    let summary: MemorySummary
+    let daemonConnected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: daemonConnected ? "circle.fill" : "circle")
+                .font(.system(size: 7))
+                .foregroundStyle(daemonConnected ? Palette.accent : .secondary)
+                .help(daemonConnected ? "Connected to ccgovd" : "ccgovd not running: polling claude agents --json")
+            stat(Formatting.bytes(summary.liveBytes), "live")
+            stat("\(summary.asleep)", "asleep")
+            stat(Formatting.bytes(summary.freedBytes), "freed")
+        }
+        .font(.callout.monospacedDigit())
+        .padding(.horizontal, 6)
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Text(value).fontWeight(.medium)
+            Text(label).foregroundStyle(.secondary)
         }
     }
 }
+
+enum Palette {
+    static let accent = Color(red: 0xF5 / 255, green: 0xA5 / 255, blue: 0x24 / 255)
+}
+
+// MARK: Sidebar
 
 struct SidebarView: View {
     @ObservedObject var model: WorkspaceModel
 
     var body: some View {
         let rows = model.rows
+        let sections = SidebarLayout.sections(rows)
+        let maxBytes = rows.filter { $0.state != .hibernated }.map(\.rssBytes).max() ?? 0
         List(selection: Binding<String?>(
             get: { model.selectedID },
             set: { id in
                 if let id, let session = rows.first(where: { $0.sessionId == id }) { model.open(session) }
             }
         )) {
-            ForEach(SessionGrouping.group(rows)) { group in
-                Section {
-                    ForEach(group.sessions) { session in
-                        SessionRow(session: session).tag(session.sessionId)
+            ForEach(sections) { section in
+                Section(section.kind.rawValue) {
+                    ForEach(section.entries) { entry in
+                        switch entry {
+                        case let .session(s):
+                            SessionRow(session: s, maxBytes: maxBytes, model: model).tag(s.sessionId)
+                        case let .project(path, name, sessions):
+                            DisclosureGroup {
+                                ForEach(sessions) { s in
+                                    SessionRow(session: s, maxBytes: maxBytes, model: model, showProject: false)
+                                        .tag(s.sessionId)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(name).lineLimit(1)
+                                    Text("\(sessions.count)").foregroundStyle(.secondary).monospacedDigit()
+                                }
+                                .help(path)
+                            }
+                        }
                     }
-                } header: {
-                    Text(group.name).help(group.path)
                 }
             }
         }
@@ -69,52 +115,108 @@ struct SidebarView: View {
 
 struct SessionRow: View {
     let session: SessionInfo
+    let maxBytes: UInt64
+    @ObservedObject var model: WorkspaceModel
+    var showProject = true
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
-                .help(label)
-            Text(SessionGrouping.displayName(session)).lineLimit(1)
-            Spacer(minLength: 4)
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(megabytes).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                .frame(minWidth: 52, alignment: .trailing)
+        HStack(spacing: 8) {
+            StateDot(state: session.state, demoted: session.demoted)
+            Text(SessionGrouping.displayName(session))
+                .lineLimit(1)
+                .foregroundStyle(isDim ? .secondary : .primary)
+            if showProject, let project = SidebarLayout.secondaryText(session) {
+                Text(project).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if session.pinned {
+                Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary).help("Pinned")
+            }
+            Spacer(minLength: 6)
+            trailing
         }
+        .help(session.cwd)
+        .contextMenu { RowMenu(session: session, model: model) }
     }
 
-    private var megabytes: String {
-        session.state == .hibernated || session.rssBytes == 0 ? "-" : "\(session.rssBytes / 1_048_576) MB"
-    }
+    private var isDim: Bool { session.state == .hibernated || session.demoted }
 
-    private var label: String {
-        switch session.state {
-        case .running: "running"
-        case .idle: "idle"
-        case .blocked: "blocked"
-        case .hibernated: "hibernated"
-        case .unknown: "unknown"
-        }
-    }
-
-    private var symbol: String {
-        switch session.state {
-        case .running: "circle.fill"
-        case .idle: "circle"
-        case .blocked: "exclamationmark.circle.fill"
-        case .hibernated: "moon.zzz"
-        case .unknown: "questionmark.circle"
-        }
-    }
-
-    private var color: Color {
-        switch session.state {
-        case .running: .green
-        case .blocked: .orange
-        default: .secondary
+    @ViewBuilder private var trailing: some View {
+        if session.state == .hibernated {
+            Text(Formatting.elapsed(sinceMs: session.hibernatedAtMs ?? session.lastActivityMs,
+                                    nowMs: Int64(Date().timeIntervalSince1970 * 1000)) ?? "")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+        } else if session.rssBytes > 0 {
+            MemoryBar(fraction: SidebarLayout.memoryFraction(session, maxBytes: maxBytes))
+                .help(Formatting.bytes(session.rssBytes))
         }
     }
 }
+
+struct StateDot: View {
+    let state: SessionState
+    let demoted: Bool
+
+    var body: some View {
+        Group {
+            switch state {
+            case .running:
+                Image(systemName: "circle.fill").foregroundStyle(Palette.accent).symbolEffect(.pulse)
+            case .blocked:
+                Image(systemName: "circle.fill").foregroundStyle(Palette.accent)
+            case .hibernated:
+                Image(systemName: "moon.fill").foregroundStyle(.tertiary)
+            case .idle, .unknown:
+                Image(systemName: "circle").foregroundStyle(demoted ? .tertiary : .secondary)
+            }
+        }
+        .font(.system(size: 8))
+        .frame(width: 10)
+    }
+}
+
+struct MemoryBar: View {
+    let fraction: Double
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(.quaternary)
+            Capsule().fill(.secondary).frame(width: max(2, 44 * fraction))
+        }
+        .frame(width: 44, height: 4)
+    }
+}
+
+struct RowMenu: View {
+    let session: SessionInfo
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some View {
+        Button("Open") { model.open(session) }
+            .disabled(session.kind == .background)
+        if session.ownedByApp {
+            Button("Close Pane") { model.close(session.sessionId) }
+        }
+        Divider()
+        Button(session.pinned ? "Unpin" : "Pin (never hibernate)") {
+            Task { await model.setPinned(session, !session.pinned) }
+        }
+        Button("Hibernate Now") { Task { await model.hibernateNow(session) } }
+            .disabled(session.state == .hibernated || session.kind == .background)
+        Divider()
+        Button("Reveal Folder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.cwd)])
+        }
+        .disabled(session.cwd.isEmpty)
+        Button("Copy Resume Command") {
+            guard let line = model.resumeCommandLine(session) else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(line, forType: .string)
+        }
+    }
+}
+
+// MARK: Pane area
 
 struct PaneArea: View {
     @ObservedObject var model: WorkspaceModel
@@ -124,10 +226,87 @@ struct PaneArea: View {
             ForEach(model.panes.filter(\.hasProcess)) { pane in
                 PaneView(pane: pane, isSelected: pane.id == model.selectedID)
             }
-            if model.selectedID == nil {
-                Text("Choose a session or create a new one").foregroundStyle(.secondary)
+            if model.selectedID == nil { EmptyState(model: model) }
+        }
+    }
+}
+
+struct EmptyState: View {
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Recents.top(model.rows)) { s in
+                Button { model.open(s) } label: {
+                    HStack(spacing: 10) {
+                        StateDot(state: s.state, demoted: s.demoted)
+                        Text(SessionGrouping.displayName(s)).font(.title3)
+                        Spacer()
+                        Text(Formatting.shortPath(s.cwd)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.5)))
+            }
+            Button("New Session in Folder...") {
+                if let cwd = DirectoryPicker.choose() { model.newSession(cwd: cwd) }
+            }
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: 440)
+        .padding()
+    }
+}
+
+struct PaneStatusStrip: View {
+    let session: SessionInfo
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(SessionGrouping.displayName(session)).fontWeight(.medium)
+            Button(Formatting.shortPath(session.cwd)) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.cwd)])
+            }
+            .buttonStyle(.link)
+            .help("Reveal in Finder")
+            Spacer()
+            if session.rssBytes > 0 { Text(Formatting.bytes(session.rssBytes)) }
+            if session.demoted { Text("bg").foregroundStyle(.secondary).help("Background CPU priority") }
+        }
+        .font(.caption.monospacedDigit())
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(.bar)
+    }
+}
+
+struct NoticeBanner: View {
+    @ObservedObject var model: WorkspaceModel
+
+    var body: some View {
+        Group {
+            if let text = model.notice {
+                HStack(spacing: 10) {
+                    Text(text).font(.callout).lineLimit(3)
+                    Button { model.notice = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .task(id: text) {
+                    try? await Task.sleep(for: .seconds(6))
+                    if model.notice == text { model.notice = nil }
+                }
             }
         }
+        .animation(.easeOut(duration: 0.2), value: model.notice)
     }
 }
 

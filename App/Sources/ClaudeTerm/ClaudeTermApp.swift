@@ -17,6 +17,13 @@ struct ClaudeTermApp: App {
                 }
                 .keyboardShortcut("n")
             }
+            CommandGroup(after: .newItem) {
+                Button("Close Pane") {
+                    if let id = model.selectedID { model.close(id) }
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+                .disabled(model.selectedID == nil)
+            }
         }
     }
 }
@@ -36,7 +43,8 @@ enum Bootstrap {
         InheritedSessionEnv.scrubProcessEnvironment()
         let binary = claude
         let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() },
-                                   notify: { DaemonNotifier.send($0, sessionId: $1) })
+                                   notify: { DaemonNotifier.send($0, sessionId: $1) },
+                                   request: { await DaemonClient.request($0, sessionId: $1) })
         // Restore before any window exists: window frame callbacks persist the layout, and a
         // persist that ran first would overwrite the saved file with an empty one.
         model.restore()
@@ -48,7 +56,10 @@ enum Bootstrap {
         // ccgovd socket when the daemon is up; `claude agents --json` polling otherwise.
         model.consume(PreferDaemonSource.live(claude: claude) { mode in
             NSLog("ClaudeTerm session source: %@", mode == .daemon ? "ccgovd socket" : "claude agents polling")
-            if mode == .daemon { Task { @MainActor in model.resyncDaemon() } }
+            Task { @MainActor in
+                model.daemonConnected = mode == .daemon
+                if mode == .daemon { model.resyncDaemon() }
+            }
         })
     }
 }

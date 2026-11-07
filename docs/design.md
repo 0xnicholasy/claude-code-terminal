@@ -1,4 +1,6 @@
-# ClaudeTerm redesign proposal
+# ClaudeTerm redesign
+
+Status: all five build steps are implemented (2026-11-07). Screenshot: `docs/screens/demo.png`. One difference from the proposal: the "freed" number counts since app launch, not since daemon start.
 
 Baseline: `docs/screens/integration-sidebar.png`. The current window is a stock `NavigationSplitView`: a sidebar of sessions grouped by project, a single pane area, and two toolbar buttons (new session, close pane). It works, but it hides the two things the app exists for, memory and session state, and it treats every session the same.
 
@@ -46,7 +48,7 @@ Baseline: `docs/screens/integration-sidebar.png`. The current window is a stock 
 
 - **Memory summary as the title.** Replace the "ClaudeTerm" title with three numbers: live RSS across all sessions, number asleep, and memory freed by hibernation since the daemon started. This is the one place the app proves it is working.
 - **Daemon status** as a small dot inside that summary: filled when connected to `ccgovd`, hollow when the app is polling `claude agents --json`.
-- Keep the new-session button. Move close-pane to the pane's own context menu and Cmd-W.
+- Keep the new-session button. Move close-pane to the row context menu and Cmd-Shift-W (Cmd-W stays the system Close Window).
 
 ### Pane area
 
