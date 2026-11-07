@@ -86,3 +86,12 @@ The native terminal's own value is UI: one window, all projects, hibernated sess
 - cmux docs site had a TLS error; restore mechanism taken from the repo README and search snippets.
 - Whether `taskpolicy -m` (memory limit) works on a running process (man page lists it at launch only).
 - libghostty-spm latest release date (release list empty on the page; README says weekly).
+
+## 7. Interaction with the existing CPU watcher (2026-11-07)
+
+`~/Library/LaunchAgents/com.hotingyuen.claude-cpu-watcher.plist` runs `~/Library/Scripts/claude-cpu-watcher.sh` every 120 s. It sums `pcpu` over every process whose command matches `/claude` and runs `~/Desktop/dev-tools/cleanup/clean-claude.sh` after the sum stays at or above 80% (default `CLAUDE_CPU_THRESHOLD`) for 10 minutes (`CLAUDE_TRIGGER_MINUTES`).
+
+- ccgovd demotion moves idle CPU to E-cores but does not lower `pcpu`, so it does not keep the watcher from firing.
+- ccgovd hibernation does lower the sum (the processes are gone), so the two jobs push in the same direction.
+- If the watcher's cleanup kills sessions, ccgovd sees them leave the index; they are not marked hibernated (ccgovd did not stop them), so the sidebar shows them only if a ClaudeTerm pane still references them. Their transcripts remain resumable.
+- Test fleets of 8 idle sessions add to the sum during the start-up burst; keep fleets short-lived.
