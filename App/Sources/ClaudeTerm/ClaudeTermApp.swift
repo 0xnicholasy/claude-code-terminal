@@ -33,6 +33,7 @@ enum Bootstrap {
 
     static func makeModel() -> WorkspaceModel {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }
+        InheritedSessionEnv.scrubProcessEnvironment()
         let binary = claude
         let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() })
         // Restore before any window exists: window frame callbacks persist the layout, and a

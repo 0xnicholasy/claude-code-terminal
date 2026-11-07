@@ -16,9 +16,11 @@ struct LaunchSpec: Equatable, Sendable {
 
     var argv: [String] { [executable] + arguments }
 
-    /// Command string handed to the libghostty exec backend. It carries only the validated
-    /// executable path, fixed flags and a UUID; cwd travels separately as the working directory.
-    var ghosttyCommand: String { "direct:" + argv.joined(separator: " ") }
+    /// Command string handed to the libghostty exec backend. libghostty runs it as
+    /// `/bin/bash -c "exec -l <command>"` (verified live 2026-11-07; the `direct:` prefix is not
+    /// honoured), so it may only contain shell-inert characters: the validated executable path,
+    /// fixed flags and a UUID. cwd travels separately as the working directory.
+    var ghosttyCommand: String { argv.joined(separator: " ") }
 }
 
 enum ClaudeCommand {
@@ -99,5 +101,25 @@ final class ClaudeBinary: @unchecked Sendable {
             resolved = true
         }
         return path
+    }
+}
+
+/// Environment markers that belong to the Claude session that launched this app (e.g. when it is
+/// started from a terminal inside Claude Code). A pane's claude inheriting them believes it is a
+/// child session and turns transcript saving off (seen live 2026-11-07), so they are removed from
+/// the app's own environment before any pane spawns. User-set knobs (CLAUDE_CODE_MAX_*, etc.) stay.
+enum InheritedSessionEnv {
+    static let names: Set<String> = [
+        "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_BRIDGE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_PID", "CLAUDE_PLUGIN_DATA", "AI_AGENT",
+    ]
+
+    static func toRemove(from environment: [String: String]) -> [String] {
+        environment.keys.filter { names.contains($0) }.sorted()
+    }
+
+    static func scrubProcessEnvironment() {
+        for name in toRemove(from: ProcessInfo.processInfo.environment) { unsetenv(name) }
     }
 }

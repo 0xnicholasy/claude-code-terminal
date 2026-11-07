@@ -23,7 +23,7 @@ struct LaunchTests {
         #expect(resume.argv == ["/usr/bin/claude", "--resume", id])
         #expect(resume.cwd == hostile)
         #expect(!resume.ghosttyCommand.contains("pwned"))
-        #expect(resume.ghosttyCommand == "direct:/usr/bin/claude --resume \(id)")
+        #expect(resume.ghosttyCommand == "/usr/bin/claude --resume \(id)")
 
         let fresh = try ClaudeCommand.newSession(id: id, cwd: "/tmp", executable: "/usr/bin/claude")
         #expect(fresh.arguments == ["--session-id", id])
@@ -46,5 +46,15 @@ struct LaunchTests {
         #expect(loc(env: [:], shell: "/shell/claude", exec: all) == "/shell/claude")
         #expect(loc(env: [:], shell: nil, exec: all) == "/h/.local/bin/claude")
         #expect(loc(env: [:], shell: nil, exec: []) == nil)
+    }
+}
+
+struct InheritedSessionEnvTests {
+    @Test func removesSessionMarkersButKeepsUserKnobs() {
+        let env = [
+            "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "x",
+            "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "3", "PATH": "/usr/bin", "HOME": "/Users/u",
+        ]
+        #expect(InheritedSessionEnv.toRemove(from: env) == ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID"])
     }
 }
