@@ -546,3 +546,24 @@ struct WindowFrameReader: NSViewRepresentable {
         isolated deinit { observers.forEach(NotificationCenter.default.removeObserver) }
     }
 }
+
+/// Cmd-click on a link in a pane. The embedded library reports the URL to the view's delegate
+/// (a `TerminalViewState`) and does not open it itself, so the app opens it here.
+extension TerminalViewState: @retroactive TerminalSurfaceOpenURLDelegate {
+    public func terminalDidRequestOpenURL(_ url: String, kind _: TerminalOpenURLKind) {
+        guard let target = LinkPolicy.url(url) else { return }
+        NSWorkspace.shared.open(target)
+    }
+}
+
+enum LinkPolicy {
+    /// Web, mail and file links only; other schemes could launch arbitrary apps from terminal output.
+    static let schemes: Set<String> = ["http", "https", "mailto", "file"]
+
+    static func url(_ raw: String) -> URL? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("/") { return URL(fileURLWithPath: text) }
+        guard let u = URL(string: text), let scheme = u.scheme?.lowercased(), schemes.contains(scheme) else { return nil }
+        return u
+    }
+}

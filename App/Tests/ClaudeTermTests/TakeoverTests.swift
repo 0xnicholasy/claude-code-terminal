@@ -150,3 +150,47 @@ struct NavigationTests {
         #expect(m.panes.allSatisfy { $0.cwd == d })
     }
 }
+
+@MainActor
+struct ClosePaneTests {
+    let id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    let claude = ProcIdentity(uid: getuid(), startSec: 1, startUsec: 1, path: "/Users/x/.local/share/claude/versions/2.1.319")
+
+    @Test func closeSendsSigtermToThePanesClaudeOnly() async throws {
+        let fake = FakeProcesses([40: claude, 41: claude])
+        let model = WorkspaceModel(store: nil, claudePath: { "/usr/local/bin/claude" }, processes: fake,
+                                   paneProcess: { _ in 40 })
+        model.newSession(cwd: "/tmp")
+        let pid = try #require(model.panes.first?.id)
+        #expect(model.panes.first?.hasProcess == true)
+        model.close(pid)
+        #expect(model.panes.isEmpty)
+        for _ in 0..<50 where !model.closing.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(fake.signalled.map(\.0) == [40])
+        #expect(fake.signalled.map(\.1) == [SIGTERM])
+    }
+
+    @Test func descendantCheckRejectsProcessesOutsideTheAppTree() {
+        let parents: [Int32: Int32] = [500: 100, 501: 500, 502: 501, 900: 1, 901: 900]
+        #expect(PaneProcess.isDescendant(502, of: 100, parents: parents))
+        #expect(!PaneProcess.isDescendant(901, of: 100, parents: parents))
+        #expect(!PaneProcess.isDescendant(100, of: 100, parents: parents))
+    }
+
+    @Test func parsesProcArgs() {
+        var buf: [UInt8] = [3, 0, 0, 0]
+        buf += Array("/bin/claude".utf8) + [0, 0, 0]
+        for a in ["claude", "--resume", "bbbb"] { buf += Array(a.utf8) + [0] }
+        buf += Array("PATH=/x".utf8) + [0]
+        #expect(PaneProcess.parseProcArgs(buf) == ["claude", "--resume", "bbbb"])
+    }
+
+    @Test func linkPolicyOpensWebMailFileOnly() {
+        #expect(LinkPolicy.url("https://example.com/a?b=1")?.absoluteString == "https://example.com/a?b=1")
+        #expect(LinkPolicy.url("mailto:a@b.c") != nil)
+        #expect(LinkPolicy.url("/Users/x/file.swift")?.isFileURL == true)
+        #expect(LinkPolicy.url("javascript:alert(1)") == nil)
+        #expect(LinkPolicy.url("vscode://open?x") == nil)
+        #expect(LinkPolicy.url("not a url") == nil)
+    }
+}

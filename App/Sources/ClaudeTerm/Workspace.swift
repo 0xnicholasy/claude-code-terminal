@@ -88,6 +88,8 @@ final class WorkspaceModel: ObservableObject {
     @Published var daemonConnected = false
     @Published private(set) var freed = FreedTracker()
     @Published var tab: DetailTab = .sessions
+    /// Panes whose claude is being stopped by Close Pane.
+    @Published private(set) var closing: Set<String> = []
 
     var windowFrame: LayoutFrame? {
         didSet { if windowFrame != oldValue { persist() } }
@@ -103,13 +105,17 @@ final class WorkspaceModel: ObservableObject {
     private let processes: ProcessControl
     /// Asks the user before Take Over stops a process (an alert in the app).
     private let confirm: (SessionInfo) -> Bool
+    /// The pid of the claude a pane started (`PaneProcess.claudePid` in the app, nil in tests).
+    private let paneProcess: (String) -> Int32?
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
          notify: @escaping (Command, String) -> Void = { _, _ in },
          request: @escaping (Command, String) async -> Response? = { _, _ in nil },
          processes: ProcessControl = SystemProcessControl(),
-         confirm: @escaping (SessionInfo) -> Bool = { _ in false }) {
+         confirm: @escaping (SessionInfo) -> Bool = { _ in false },
+         paneProcess: @escaping (String) -> Int32? = { _ in nil }) {
+        self.paneProcess = paneProcess
         self.store = store
         self.claudePath = claudePath
         self.notify = notify
@@ -313,9 +319,24 @@ final class WorkspaceModel: ObservableObject {
         newSession(cwd: cwd)
     }
 
+    /// Removes the pane and ends its claude. Closing the view alone left claude running in the
+    /// background (seen live 2026-11-07); SIGTERM lets it save the transcript, so the session can be
+    /// resumed later from the sidebar.
     func close(_ id: String) {
         guard let idx = panes.firstIndex(where: { $0.id == id }) else { return }
-        panes.remove(at: idx)
+        let pane = panes.remove(at: idx)
+        if pane.hasProcess, let pid = paneProcess(id) {
+            closing.insert(id)
+            let control = processes
+            Task {
+                // SessionEnd hooks can delay exit by several seconds; allow 20 s before reporting.
+                if await Takeover.stop(pid: pid, control: control, timeout: .seconds(20)) != nil {
+                    notice = "Closed the pane, but its claude (pid \(pid)) did not stop. It now shows under Elsewhere."
+                }
+                closing.remove(id)
+            }
+        }
+        pane.markExited()
         notify(.detach, id)
         guard selectedID == id else {
             persist()

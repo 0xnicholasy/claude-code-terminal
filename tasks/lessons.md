@@ -20,3 +20,4 @@
 - The rtk hook rewrites `cat` with several file arguments into its own reader, which fails. Use `/bin/cat` to concatenate files (2026-11-07).
 - GUI-launched apps get launchd's PATH, and so does every child: hooks in a pane's claude failed with `node: command not found`. Adopt the login shell's PATH at startup, before any pane spawns (2026-11-07).
 - libghostty-spm applies its theme after the builder config, so `selection-*` or colour keys set with `withCustom` are overwritten. Put colours in the `TerminalTheme` passed to `TerminalController(theme:)` (2026-11-07).
+- `proc_pidinfo` cannot read processes owned by another user, such as the root-owned `/usr/bin/login` that sits between the app and each pane's claude. Use `sysctl KERN_PROC_ALL` for parent pids (2026-11-07).

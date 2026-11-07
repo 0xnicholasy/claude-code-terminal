@@ -1,3 +1,4 @@
+import CCProtocol
 import Darwin
 import Foundation
 
@@ -90,5 +91,75 @@ enum Takeover {
         case .signalFailed: "Could not stop the other process."
         case .didNotExit: "The other claude did not exit within 8 s. Nothing was changed; try again."
         }
+    }
+}
+
+/// Finds the claude process a pane started. Panes run `login -> bash -> claude --resume <id>` as
+/// descendants of this app, so only the app's own process tree is searched, and the match is on the
+/// session id in claude's argv. A process outside the tree is never returned.
+enum PaneProcess {
+    static func claudePid(sessionId: String, root: Int32 = getpid()) -> Int32? {
+        guard SessionID.isValid(sessionId) else { return nil }
+        let table = parents()
+        return table.keys.sorted().first { pid in
+            isDescendant(pid, of: root, parents: table)
+                && argv(pid).contains(sessionId)
+                && argv(pid).first.map { Takeover.isClaudeBinary($0) || $0.hasSuffix("/claude") } == true
+        }
+    }
+
+    /// Walks the parent chain; bounded so a corrupt table cannot loop.
+    static func isDescendant(_ pid: Int32, of root: Int32, parents: [Int32: Int32]) -> Bool {
+        var cur = pid
+        for _ in 0..<64 {
+            guard let p = parents[cur], p > 1 else { return false }
+            if p == root { return true }
+            cur = p
+        }
+        return false
+    }
+
+    /// pid -> parent pid for every process. Uses sysctl, not proc_pidinfo: the pane's
+    /// `/usr/bin/login` runs as root, and proc_pidinfo cannot read another user's process, which
+    /// broke the parent chain (seen live 2026-11-07).
+    private static func parents() -> [Int32: Int32] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var size = 0
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return [:] }
+        size += size / 8 // room for processes started between the two calls
+        let stride = MemoryLayout<kinfo_proc>.stride
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / stride)
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return [:] }
+        var out: [Int32: Int32] = [:]
+        for p in procs.prefix(size / stride) where p.kp_proc.p_pid > 0 {
+            out[p.kp_proc.p_pid] = p.kp_eproc.e_ppid
+        }
+        return out
+    }
+
+    /// argv via KERN_PROCARGS2: argc, exec path, padding, then argv strings.
+    static func argv(_ pid: Int32) -> [String] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return [] }
+        var buf = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return [] }
+        return parseProcArgs(Array(buf.prefix(size)))
+    }
+
+    static func parseProcArgs(_ buf: [UInt8]) -> [String] {
+        guard buf.count > 4 else { return [] }
+        let argc = Int(buf[0]) | Int(buf[1]) << 8 | Int(buf[2]) << 16 | Int(buf[3]) << 24
+        var i = 4
+        while i < buf.count, buf[i] != 0 { i += 1 } // exec path
+        while i < buf.count, buf[i] == 0 { i += 1 } // padding
+        var args: [String] = []
+        while args.count < argc, i < buf.count {
+            let start = i
+            while i < buf.count, buf[i] != 0 { i += 1 }
+            args.append(String(decoding: buf[start..<i], as: UTF8.self))
+            i += 1
+        }
+        return args
     }
 }

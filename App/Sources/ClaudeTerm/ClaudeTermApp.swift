@@ -113,7 +113,8 @@ enum Bootstrap {
         let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() },
                                    notify: { DaemonNotifier.send($0, sessionId: $1) },
                                    request: { await DaemonClient.request($0, sessionId: $1) },
-                                   confirm: TakeoverAlert.confirm)
+                                   confirm: TakeoverAlert.confirm,
+                                   paneProcess: { PaneProcess.claudePid(sessionId: $0) })
         // Restore before any window exists: window frame callbacks persist the layout, and a
         // persist that ran first would overwrite the saved file with an empty one.
         model.restore()
