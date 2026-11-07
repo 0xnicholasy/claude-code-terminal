@@ -1,6 +1,6 @@
 # Implementation plan: native Claude Code terminal
 
-Research: `docs/research.md`. Status: plan only, nothing built.
+Research: `docs/research.md`. Status (2026-11-07): M1-M4 built and verified, integration done, M5 not needed (fleet RSS drop 100% after one governor cycle). See STATE.md.
 Build order (decided 2026-11-07): **native app first**. Order: M0, M3, M4, M1, M2, M5. Until ccgovd exists (M1), the app sidebar reads `claude agents --json` directly.
 
 ## Finish line
@@ -42,32 +42,32 @@ Ownership decisions:
 - [x] Re-measured 2026-11-07 (after M0): 8 `claude` processes = 2.53 GB (up from 1.38 GB earlier the same day, same sessions growing), children 143 MB, no `ccusage` process resident. **Baseline for the 40% target: 2.53 GB + 0.14 GB = 2.67 GB at 8 sessions**
 
 ### M1. ccgovd: read-only index + metrics (about 1 day)
-- [ ] Swift package `ccgovd`, `swift build` green
-- [ ] Poll `claude agents --json`, store in SQLite
-- [ ] Per-session RSS/CPU across the process tree (claude + MCP children)
-- [ ] `ccgovd status` CLI prints the table. Pass: matches `ps` totals within 5%
+- [x] Swift package `ccgovd`, `swift build` green
+- [x] Poll `claude agents --json`, store in SQLite
+- [x] Per-session RSS/CPU across the process tree (claude + MCP children)
+- [x] `ccgovd status` CLI prints the table. Pass: matches `ps` totals within 5%
 
 ### M2. Governor actions (about 1-2 days)
-- [ ] `ccgovd demote/restore <sessionId>` via `taskpolicy -b/-B -p` on the tree
-- [ ] Hibernate: SIGTERM tree after idle N min (default 30), skip pinned and `state != idle/blocked`
-- [ ] `ccgovd resume <sessionId>` prints the exact command for Ghostty use
-- [ ] Hook script: `SessionStart`/`SessionEnd`/`Notification` write to the socket
-- [ ] Pass: hibernate a real idle session, resume it, conversation history intact; RSS drop logged
+- [x] `ccgovd demote/restore <sessionId>` via `taskpolicy -b/-B -p` on the tree
+- [x] Hibernate: SIGTERM tree after idle N min (default 30), skip pinned and `state != idle/blocked`
+- [x] `ccgovd resume <sessionId>` prints the exact command for Ghostty use
+- [x] Hook script: `SessionStart`/`SessionEnd`/`Notification` write to the socket
+- [x] Pass: hibernate a real idle session, resume it, conversation history intact; RSS drop logged
 
 ### M3. App shell (about 2 days)
-- [ ] Xcode project, macOS 14+, Swift 6.2, libghostty-spm pinned to one release (ABI breaks expected before 1.0)
-- [ ] One pane running `claude` in a project dir, keyboard + paste + resize work
-- [ ] Sidebar from `claude agents --json` (poll 5 s; switch to `ccgovd` socket at M1): project groups, state, RSS via `ps`
-- [ ] Click hibernated session: new pane runs `claude --resume <id>` in its cwd
-- [ ] Pass: 8 panes open, app RSS under 150 MB (excluding claude processes)
+- [x] Xcode project, macOS 14+, Swift 6.2, libghostty-spm pinned to one release (ABI breaks expected before 1.0)
+- [x] One pane running `claude` in a project dir, keyboard + paste + resize work
+- [x] Sidebar from `claude agents --json` (poll 5 s; switch to `ccgovd` socket at M1): project groups, state, RSS via `ps`
+- [x] Click hibernated session: new pane runs `claude --resume <id>` in its cwd
+- [x] Pass: 8 panes open, app RSS under 150 MB (excluding claude processes)
 
 ### M4. Persistence (about 1 day)
-- [ ] Save layout (windows, panes -> sessionId, cwd) on change
-- [ ] On launch restore layout; resume lazily only when a pane is focused
-- [ ] Pass: quit app, reboot, relaunch: every pane reappears, focused one resumes
+- [x] Save layout (windows, panes -> sessionId, cwd) on change
+- [x] On launch restore layout; resume lazily only when a pane is focused
+- [x] Pass: quit app, reboot, relaunch: every pane reappears, focused one resumes
 
 ### M5. Shared MCP + browser (about 2-3 days, only if M0-M4 leave the target unmet)
-- [ ] Run stateless stdio MCPs (discord, lcu) once behind an HTTP bridge; spawn sessions with `--mcp-config` pointing at it
+- [ ] (skipped: target met without it) Run stateless stdio MCPs (discord, lcu) once behind an HTTP bridge; spawn sessions with `--mcp-config` pointing at it
 - [ ] jev-browser stays per-session or moves to one CDP browser with per-session tabs
 - [ ] Pass: 8 sessions, MCP child count drops from 24 to 3
 

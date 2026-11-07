@@ -8,6 +8,11 @@ ROOT="${TMPDIR%/}/ccterm-test"
 STATE="$ROOT/fleet.state"   # lines: uuid dir wrapper_pid
 CLAUDE="${CCTERM_CLAUDE_PATH:-$HOME/.local/bin/claude}"
 mkdir -p "$ROOT"
+# Session markers inherited from a parent Claude session make the child skip transcripts and
+# stay out of `claude agents --json` (see tasks/lessons.md); strip them for every fleet process.
+SCRUB=(-u CLAUDECODE -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_BRIDGE_SESSION_ID
+       -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH -u CLAUDE_CODE_MESSAGING_SOCKET
+       -u CLAUDE_CODE_MESSAGING_TOKEN -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_PID -u CLAUDE_PLUGIN_DATA -u AI_AGENT)
 
 # claude root pid for a session uuid: the process running "$CLAUDE --resume <uuid>"
 # (not the script(1) wrapper, whose argv also contains it).
@@ -25,8 +30,8 @@ case "${1:-}" in
     n=${2:-8}
     for i in $(seq 1 "$n"); do
       u=$(uuidgen | tr 'A-Z' 'a-z'); d="$ROOT/fleet-$i-$u"; mkdir -p "$d"
-      (cd "$d" && "$CLAUDE" -p "reply with OK" --model haiku --session-id "$u" >/dev/null 2>&1)
-      (cd "$d" && nohup script -q /dev/null "$CLAUDE" --resume "$u" </dev/null >/dev/null 2>&1 &
+      (cd "$d" && env "${SCRUB[@]}" "$CLAUDE" -p "reply with OK" --model haiku --session-id "$u" >/dev/null 2>&1)
+      (cd "$d" && nohup env "${SCRUB[@]}" script -q /dev/null "$CLAUDE" --resume "$u" </dev/null >/dev/null 2>&1 &
        echo "$u $d $!" >> "$STATE")
     done
     sleep 20; "$0" pids ;;

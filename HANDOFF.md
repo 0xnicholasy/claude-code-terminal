@@ -3,14 +3,14 @@
 ## Done
 - Repo + private GitHub repo `0xnicholasy/claude-code-terminal`, SPEC.md, `Protocol/` (CCProtocol, tests green), `scripts/fleet.sh` (throwaway fleet: start/pids/rss/stop, verified on 1 session: 846,448 KB tree RSS, stop leaves nothing).
 
+- M1-M4, integration, memory target: done and verified (see STATE.md for numbers).
+
 ## In progress
-- App lane (M3, M4) and daemon lane (M1, M2): subagents in git worktrees under `.claude/worktrees/`.
+- Final gate: code review, security review, verifier, codex on the full diff.
 
 ## Next
-1. Merge lane branches into `main`, run gates (below), commit + push per milestone.
-2. Integration: `DaemonSocketSource` in the app, fallback to `AgentsPollingSource`.
-3. Live checks (screenshots under `docs/screens/`), memory target with `scripts/fleet.sh start 8`.
-4. Final review gate, STATE.md / HANDOFF.md / tasks/todo.md.
+1. Fix every correctness and security finding, re-run gates, push.
+2. Final report.
 
 ## Open decisions
 - None blocking. Codex plan review skipped (usage limit); retry on final diff.
