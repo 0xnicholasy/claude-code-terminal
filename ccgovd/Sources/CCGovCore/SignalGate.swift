@@ -24,7 +24,14 @@ public struct SystemSignalSender: SignalSender {
         errno = 0
         let v = getpriority(PRIO_DARWIN_PROCESS, id_t(pid))
         if v == -1 && errno != 0 { return nil }
-        return v != 0
+        if v != 0 { return true }
+        // Observed on this macOS: after a successful setpriority(PRIO_DARWIN_BG) from another process, getpriority
+        // still returns 0 while `ps -o pri` drops. The kernel flag in proc_bsdinfo is the fallback read-back.
+        var bsd = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, size) == size else { return false }
+        let darwinBG: UInt32 = 0x8000, extDarwinBG: UInt32 = 0x10000 // PROC_FLAG_DARWINBG / PROC_FLAG_EXT_DARWINBG
+        return bsd.pbi_flags & (darwinBG | extDarwinBG) != 0
     }
 }
 
@@ -96,6 +103,14 @@ public final class SignalGate {
         return true
     }
 
+    /// The claude binary runs from `.../claude/versions/<semver>`, so the kernel process name is the version
+    /// (for example "2.1.319"), not "claude". Accept either.
+    static func isClaudeComm(_ comm: String, expected: String) -> Bool {
+        if comm == expected { return true }
+        let parts = comm.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count >= 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
+    }
+
     public func check(pid: Int32, target: GovernTarget, current: [ProcessRecord]) -> GateDecision {
         guard pid > 1 else { return .refuse("pid \(pid) <= 1") }
         guard pid != selfPid else { return .refuse("pid is the daemon itself") }
@@ -113,7 +128,7 @@ public final class SignalGate {
         guard let now = byPid[pid] else { return .refuse("pid \(pid) no longer exists") }
         guard now.startTime == recorded else { return .refuse("pid \(pid) start time changed (pid reused)") }
         if pid == target.rootPid {
-            guard now.comm == rootComm else { return .refuse("root pid \(pid) comm '\(now.comm)' != '\(rootComm)'") }
+            guard Self.isClaudeComm(now.comm, expected: rootComm) else { return .refuse("root pid \(pid) comm '\(now.comm)' != '\(rootComm)'") }
         } else {
             // Descendant: its parent chain must reach the session root in the live table.
             var cur = now, hops = 0, reached = false

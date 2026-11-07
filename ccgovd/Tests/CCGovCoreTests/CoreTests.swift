@@ -175,6 +175,18 @@ import CCProtocol
         #expect(gate.kill(pid: 700, signal: SIGTERM, target: target(root: 700, cwd: "/tmp/ccterm-test/x")))
     }
 
+    @Test func rootIdentityAcceptsVersionNamedBinaryButNotOtherProcesses() {
+        // The real binary runs as .../claude/versions/2.1.319, so its kernel process name is the version.
+        let sender = RecordingSender()
+        let ok = SignalGate(sender: sender, table: FakeTable([rec(500, 1, "2.1.319")]), selfPid: 99)
+        #expect(ok.kill(pid: 500, signal: SIGTERM, target: target(root: 500)))
+        for bad in ["node", "2.1.x", "..", "zsh"] {
+            let gate = SignalGate(sender: sender, table: FakeTable([rec(501, 1, bad)]), selfPid: 99)
+            #expect(!gate.kill(pid: 501, signal: SIGTERM, target: target(root: 501)))
+        }
+        #expect(sender.kills.map(\.pid) == [500])
+    }
+
     @Test func refusesDescendantThatIsNotUnderRoot() {
         // 501 is recorded as a descendant of 500, but in the live table it now hangs off a different parent.
         let table = FakeTable([rec(500, 1, "claude"), rec(501, 1, "node")])
