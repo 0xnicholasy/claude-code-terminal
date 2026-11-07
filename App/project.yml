@@ -1,0 +1,60 @@
+name: ClaudeTerm
+options:
+  bundleIdPrefix: com.hotingyuen
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+packages:
+  libghostty-spm:
+    url: https://github.com/Lakr233/libghostty-spm
+    exactVersion: 2.2.2026103001
+  CCProtocol:
+    path: ../Protocol
+targets:
+  ClaudeTerm:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/ClaudeTerm
+    dependencies:
+      - package: libghostty-spm
+        product: GhosttyTerminal
+      - package: CCProtocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hotingyuen.ClaudeTerm
+        PRODUCT_NAME: ClaudeTerm
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: ClaudeTerm
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+  ClaudeTermTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/ClaudeTermTests
+    dependencies:
+      - target: ClaudeTerm
+      - package: CCProtocol
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hotingyuen.ClaudeTermTests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ClaudeTerm:
+    build:
+      targets:
+        ClaudeTerm: all
+    test:
+      targets:
+        - ClaudeTermTests
+    run:
+      config: Debug

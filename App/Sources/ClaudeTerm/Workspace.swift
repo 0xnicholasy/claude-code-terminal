@@ -1,0 +1,245 @@
+import AppKit
+import CCProtocol
+import Foundation
+import GhosttyTerminal
+
+/// One terminal pane. It records whether a process has been launched (`launched`) but spawns
+/// nothing itself: the terminal view state, which owns the pty, is created only when a view asks.
+@MainActor
+final class Pane: ObservableObject, Identifiable {
+    enum Origin { case new, resume }
+
+    nonisolated let id: String
+    let cwd: String
+    @Published var title: String
+    var origin: Origin
+    private(set) var launched: LaunchSpec?
+    private var terminal: TerminalViewState?
+    var onChange: (() -> Void)?
+
+    init(sessionId: String, cwd: String, title: String, origin: Origin) {
+        id = sessionId
+        self.cwd = cwd
+        self.title = title
+        self.origin = origin
+    }
+
+    var hasProcess: Bool { launched != nil }
+
+    func markLaunched(_ spec: LaunchSpec) {
+        launched = spec
+        origin = .resume
+    }
+
+    func markExited() {
+        launched = nil
+        terminal = nil
+        onChange?()
+    }
+
+    /// Creates the libghostty surface state on first use. Only called from a view for a launched pane.
+    func viewState() -> TerminalViewState? {
+        guard let spec = launched else { return nil }
+        if let terminal { return terminal }
+        let state = TerminalViewState()
+        state.configuration = TerminalSurfaceOptions(
+            backend: .exec,
+            workingDirectory: spec.cwd,
+            command: spec.ghosttyCommand
+        )
+        state.onClose = { [weak self] _ in
+            Task { @MainActor in self?.markExited() }
+        }
+        terminal = state
+        return state
+    }
+}
+
+@MainActor
+final class WorkspaceModel: ObservableObject {
+    @Published private(set) var panes: [Pane] = []
+    @Published private(set) var selectedID: String?
+    @Published private(set) var sessions: [SessionInfo] = []
+    @Published var notice: String?
+
+    var windowFrame: LayoutFrame? {
+        didSet { if windowFrame != oldValue { persist() } }
+    }
+
+    private let store: LayoutStore?
+    private let claudePath: @Sendable () -> String?
+    private var sourceTask: Task<Void, Never>?
+
+    init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?) {
+        self.store = store
+        self.claudePath = claudePath
+    }
+
+    // MARK: Sidebar data
+
+    /// Source sessions, plus in-app panes the index does not know about as hibernated rows.
+    var rows: [SessionInfo] {
+        let inApp = Set(panes.map(\.id))
+        var out = sessions.map { s -> SessionInfo in
+            var s = s
+            s.ownedByApp = inApp.contains(s.sessionId)
+            return s
+        }
+        let indexed = Set(sessions.map(\.sessionId))
+        for pane in panes where !indexed.contains(pane.id) {
+            out.append(SessionInfo(
+                sessionId: pane.id, cwd: pane.cwd, name: pane.title.isEmpty ? nil : pane.title,
+                kind: .hibernated, state: pane.hasProcess ? .unknown : .hibernated, ownedByApp: true
+            ))
+        }
+        return out
+    }
+
+    var groups: [ProjectGroup] { SessionGrouping.group(rows) }
+
+    func apply(sessions list: [SessionInfo]) { sessions = list }
+
+    func consume(_ source: SessionSource) {
+        sourceTask?.cancel()
+        sourceTask = Task { [weak self] in
+            for await list in source.updates() {
+                guard let self else { return }
+                self.apply(sessions: list)
+            }
+        }
+    }
+
+    // MARK: Pane actions
+
+    /// Starts a brand-new session in `cwd` with a fresh UUID.
+    func newSession(cwd: String) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else {
+            notice = "Not a directory: \(cwd)"
+            return
+        }
+        let id = UUID().uuidString.lowercased()
+        let pane = makePane(sessionId: id, cwd: cwd, title: (cwd as NSString).lastPathComponent, origin: .new)
+        panes.append(pane)
+        select(pane.id)
+    }
+
+    /// Sidebar click.
+    func open(_ session: SessionInfo) {
+        if panes.contains(where: { $0.id == session.sessionId }) {
+            select(session.sessionId)
+            return
+        }
+        guard SessionID.isValid(session.sessionId) else {
+            notice = "Session id is not a valid UUID; cannot open it."
+            return
+        }
+        if session.kind == .background {
+            notice = "This background session is managed by Claude itself; it is not opened here."
+            return
+        }
+        if let pid = session.pid, session.kind == .interactive {
+            notice = "This session is running in another terminal (pid \(pid)). Close it there first to open it here."
+            return
+        }
+        let title = session.name ?? (session.cwd as NSString).lastPathComponent
+        let pane = makePane(sessionId: session.sessionId, cwd: session.cwd, title: title, origin: .resume)
+        panes.append(pane)
+        select(pane.id)
+    }
+
+    func select(_ id: String?) {
+        if let id, let pane = panes.first(where: { $0.id == id }) {
+            selectedID = id
+            launchIfNeeded(pane)
+        } else {
+            selectedID = nil
+        }
+        persist()
+    }
+
+    func close(_ id: String) {
+        guard let idx = panes.firstIndex(where: { $0.id == id }) else { return }
+        panes.remove(at: idx)
+        if selectedID == id { selectedID = panes.last?.id }
+        if let sel = selectedID, let pane = panes.first(where: { $0.id == sel }) { launchIfNeeded(pane) }
+        persist()
+    }
+
+    /// Restore panes from the layout file as placeholders. Only the selected pane launches.
+    func restore() {
+        guard let store else { return }
+        switch store.load() {
+        case .empty:
+            return
+        case .recoveredCorrupt:
+            notice = "Saved layout was unreadable; it was moved to layout.json.bad and the app started empty."
+        case let .loaded(layout):
+            guard let window = layout.windows.first else { return }
+            panes = window.panes.compactMap { rec in
+                guard SessionID.isValid(rec.sessionId) else { return nil }
+                return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title, origin: .resume)
+            }
+            windowFrameForRestore = window.frame
+            if let sel = window.selected, panes.contains(where: { $0.id == sel }) {
+                select(sel)
+            }
+        }
+    }
+
+    /// Frame read from disk at restore; the window view applies it once.
+    private(set) var windowFrameForRestore: LayoutFrame?
+
+    // MARK: Internals
+
+    private func makePane(sessionId: String, cwd: String, title: String, origin: Pane.Origin) -> Pane {
+        let pane = Pane(sessionId: sessionId, cwd: cwd, title: title, origin: origin)
+        pane.onChange = { [weak self] in
+            self?.objectWillChange.send()
+        }
+        return pane
+    }
+
+    private func launchIfNeeded(_ pane: Pane) {
+        guard !pane.hasProcess else { return }
+        guard let exe = claudePath() else {
+            notice = "Could not find the claude binary. Set CCTERM_CLAUDE_PATH or install it at ~/.local/bin/claude."
+            return
+        }
+        do {
+            let spec = switch pane.origin {
+            case .new: try ClaudeCommand.newSession(id: pane.id, cwd: pane.cwd, executable: exe)
+            case .resume: try ClaudeCommand.resume(id: pane.id, cwd: pane.cwd, executable: exe)
+            }
+            pane.markLaunched(spec)
+            objectWillChange.send()
+        } catch {
+            notice = "Could not start claude: \(error)"
+        }
+    }
+
+    private func persist() {
+        guard let store else { return }
+        let window = WindowRecord(
+            panes: panes.map { PaneRecord(sessionId: $0.id, cwd: $0.cwd, title: $0.title) },
+            selected: selectedID,
+            frame: windowFrame
+        )
+        do { try store.save(LayoutFile(windows: [window])) } catch {
+            notice = "Could not save layout: \(error.localizedDescription)"
+        }
+    }
+}
+
+enum DirectoryPicker {
+    @MainActor
+    static func choose() -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Choose the project directory for the new session"
+        return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
