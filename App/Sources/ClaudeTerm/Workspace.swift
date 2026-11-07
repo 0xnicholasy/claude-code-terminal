@@ -46,7 +46,13 @@ final class Pane: ObservableObject, Identifiable {
     static let unboundKeys = ["super+q", "super+n", "super+shift+w", "ctrl+tab", "ctrl+shift+tab",
                               "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down"]
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
-    static let sharedController = TerminalController { config in
+    /// The library's default theme, with an amber selection instead of its grey one. Theme commands are
+    /// applied after the builder's, so selection colours set in the builder would be overwritten.
+    static let theme = TerminalTheme(
+        light: TerminalConfiguration.alabaster.selectionBackground("F5D9A8").selectionForeground("2B1D05"),
+        dark: TerminalConfiguration.afterglow.selectionBackground("6B4A12").selectionForeground("FFF4E0")
+    )
+    static let sharedController = TerminalController(theme: theme) { config in
         for key in unboundKeys { config.withCustom("keybind", "\(key)=unbind") }
         // Breathing room between the terminal text and the sidebar / status strip.
         config.withCustom("window-padding-x", "12")
