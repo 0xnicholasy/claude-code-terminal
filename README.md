@@ -34,22 +34,23 @@ Idle sessions, measured on 2026-11-07.
 | ClaudeTerm | 81 MB | ~4.9 GB |
 | ClaudeTerm + `ccgovd --govern` | 81 MB | **0** |
 
-## Build
+## Install
 
-Needs macOS 14+, Xcode with Swift 6, `xcodegen`, Claude Code 2.1.319+.
+Needs macOS 14+, Xcode, Claude Code 2.1.319+, and SSH access to this repo.
 
 ```sh
-cd App && xcodegen generate
-xcodebuild -scheme ClaudeTerm -destination 'platform=macOS' build
+brew install 0xnicholasy/tap/claudeterm
+ln -sf "$(brew --prefix claudeterm)/ClaudeTerm.app" /Applications/ClaudeTerm.app
+brew services start claudeterm   # optional: ccgovd daemon, read-only
 ```
 
-## Daemon
+For the daemon to demote and hibernate idle sessions, run `ccgovd run --govern`.
+
+## Build from source
 
 ```sh
-cd ccgovd
-make install-daemon            # read-only
-make install-daemon GOVERN=1   # also demote and hibernate
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.hotingyuen.ccgovd.plist
+scripts/build-app.sh           # builds build/ClaudeTerm.app
+cd ccgovd && make install-daemon
 ```
 
 Hook setup: [`ccgovd/hooks/README.md`](ccgovd/hooks/README.md). Design notes: [`docs/design.md`](docs/design.md).
