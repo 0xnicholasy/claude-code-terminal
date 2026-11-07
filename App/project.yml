@@ -22,6 +22,7 @@ targets:
     platform: macOS
     sources:
       - Sources/ClaudeTerm
+      - path: Resources/Assets.xcassets
     dependencies:
       - package: libghostty-spm
         product: GhosttyTerminal
@@ -32,6 +33,7 @@ targets:
         PRODUCT_NAME: ClaudeTerm
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: ClaudeTerm
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         ENABLE_APP_SANDBOX: NO
