@@ -34,12 +34,15 @@ enum Bootstrap {
     static func makeModel() -> WorkspaceModel {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }
         let binary = claude
-        return WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() })
+        let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() })
+        // Restore before any window exists: window frame callbacks persist the layout, and a
+        // persist that ran first would overwrite the saved file with an empty one.
+        model.restore()
+        return model
     }
 
     static func start(_ model: WorkspaceModel) {
         guard !isUnderTest else { return }
-        model.restore()
         model.consume(AgentsPollingSource(claude: claude))
     }
 }
