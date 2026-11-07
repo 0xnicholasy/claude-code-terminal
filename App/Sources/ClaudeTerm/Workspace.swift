@@ -81,15 +81,23 @@ final class WorkspaceModel: ObservableObject {
     private let notify: (Command, String) -> Void
     /// Request/response call to ccgovd (`DaemonClient.request` in the app, nil in tests by default).
     private let request: (Command, String) async -> Response?
+    /// Signals processes for Take Over (`SystemProcessControl` in the app, a fake in tests).
+    private let processes: ProcessControl
+    /// Asks the user before Take Over stops a process (an alert in the app).
+    private let confirm: (SessionInfo) -> Bool
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
          notify: @escaping (Command, String) -> Void = { _, _ in },
-         request: @escaping (Command, String) async -> Response? = { _, _ in nil }) {
+         request: @escaping (Command, String) async -> Response? = { _, _ in nil },
+         processes: ProcessControl = SystemProcessControl(),
+         confirm: @escaping (SessionInfo) -> Bool = { _ in false }) {
         self.store = store
         self.claudePath = claudePath
         self.notify = notify
         self.request = request
+        self.processes = processes
+        self.confirm = confirm
     }
 
     // MARK: Sidebar data
@@ -203,9 +211,32 @@ final class WorkspaceModel: ObservableObject {
         if session.kind == .interactive {
             // A live interactive record without a pid is still live; resuming it would start a duplicate process.
             let where_ = session.pid.map { "another terminal (pid \($0))" } ?? "another terminal"
-            notice = "This session is running in \(where_). Close it there first to open it here."
+            notice = "This session is running in \(where_). Right-click it and choose Take Over to move it here."
             return
         }
+        openResumePane(session)
+    }
+
+    /// True when Take Over applies: a live interactive session in another terminal.
+    func canTakeOver(_ s: SessionInfo) -> Bool {
+        s.kind == .interactive && s.pid != nil && !s.ownedByApp
+            && !panes.contains { $0.id == s.sessionId }
+    }
+
+    /// Stops the claude process in the other terminal (after confirmation), then resumes the
+    /// session in a pane here. The other terminal's tab is left at its shell prompt.
+    func takeOver(_ session: SessionInfo) async {
+        guard canTakeOver(session), SessionID.isValid(session.sessionId) else { return }
+        guard confirm(session) else { return }
+        if let refusal = await Takeover.stop(pid: session.pid, control: processes) {
+            notice = Takeover.message(refusal)
+            return
+        }
+        guard !panes.contains(where: { $0.id == session.sessionId }) else { return }
+        openResumePane(session)
+    }
+
+    private func openResumePane(_ session: SessionInfo) {
         let title = session.name ?? (session.cwd as NSString).lastPathComponent
         let pane = makePane(sessionId: session.sessionId, cwd: session.cwd, title: title, origin: .resume)
         panes.append(pane)

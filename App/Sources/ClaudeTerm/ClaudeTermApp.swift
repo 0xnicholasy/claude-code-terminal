@@ -1,3 +1,5 @@
+import AppKit
+import CCProtocol
 import SwiftUI
 
 @main
@@ -29,6 +31,23 @@ struct ClaudeTermApp: App {
 }
 
 @MainActor
+enum TakeoverAlert {
+    static func confirm(_ s: SessionInfo) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Move \(SessionGrouping.displayName(s)) here?"
+        var info = "ClaudeTerm stops claude in the other terminal (pid \(s.pid.map(String.init) ?? "?")) "
+            + "and resumes the conversation in a pane here. The other tab returns to its shell prompt."
+        if s.state == .running {
+            info += "\n\nThis session is working right now. Stopping it interrupts the current reply."
+        }
+        alert.informativeText = info
+        alert.addButton(withTitle: "Take Over")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+@MainActor
 enum Bootstrap {
     /// The unit-test host launches this app; it must not read the user's layout or run `claude`.
     static var isUnderTest: Bool {
@@ -44,7 +63,8 @@ enum Bootstrap {
         let binary = claude
         let model = WorkspaceModel(store: LayoutStore(url: LayoutStore.defaultURL()), claudePath: { binary.get() },
                                    notify: { DaemonNotifier.send($0, sessionId: $1) },
-                                   request: { await DaemonClient.request($0, sessionId: $1) })
+                                   request: { await DaemonClient.request($0, sessionId: $1) },
+                                   confirm: TakeoverAlert.confirm)
         // Restore before any window exists: window frame callbacks persist the layout, and a
         // persist that ran first would overwrite the saved file with an empty one.
         model.restore()

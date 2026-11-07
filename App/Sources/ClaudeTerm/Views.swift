@@ -94,6 +94,8 @@ enum Palette {
 
 struct SidebarView: View {
     @ObservedObject var model: WorkspaceModel
+    /// Project groups the user folded. Groups start expanded so every session in a project is visible.
+    @State private var collapsed: Set<String> = []
 
     var body: some View {
         let rows = model.rows
@@ -112,7 +114,12 @@ struct SidebarView: View {
                         case let .session(s):
                             SessionRow(session: s, maxBytes: maxBytes, model: model).tag(s.sessionId)
                         case let .project(path, name, sessions):
-                            DisclosureGroup {
+                            DisclosureGroup(isExpanded: Binding(
+                                get: { !collapsed.contains(entry.id) },
+                                set: { open in
+                                    if open { collapsed.remove(entry.id) } else { collapsed.insert(entry.id) }
+                                }
+                            )) {
                                 ForEach(sessions) { s in
                                     SessionRow(session: s, maxBytes: maxBytes, model: model, showProject: false)
                                         .tag(s.sessionId)
@@ -123,6 +130,9 @@ struct SidebarView: View {
                                     Text("\(sessions.count)").foregroundStyle(.secondary).monospacedDigit()
                                 }
                                 .help(path)
+                                .contextMenu {
+                                    Button("New Session in This Project") { model.newSession(cwd: path) }
+                                }
                             }
                         }
                     }
@@ -217,6 +227,11 @@ struct RowMenu: View {
     var body: some View {
         Button("Open") { model.open(session) }
             .disabled(session.kind == .background)
+        if model.canTakeOver(session) {
+            Button("Take Over") { Task { await model.takeOver(session) } }
+        }
+        Button("New Session in This Project") { model.newSession(cwd: session.cwd) }
+            .disabled(session.cwd.isEmpty)
         if session.ownedByApp {
             Button("Close Pane") { model.close(session.sessionId) }
         }
