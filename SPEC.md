@@ -111,7 +111,7 @@ Coexisting job: `com.hotingyuen.claude-cpu-watcher` sums CPU of all `/claude` pr
 **M3 App shell** (app lane)
 - `xcodegen generate && xcodebuild -scheme ClaudeTerm -destination 'platform=macOS' build test` green.
 - One pane runs `claude` in a chosen project dir; keyboard, paste, resize work. Screenshot `docs/screens/m3-pane.png`.
-- Sidebar shows every entry of `claude agents --json`, grouped by cwd, with state and RSS; row count equals `claude agents --json | jq length` at test time. Screenshot `docs/screens/m3-sidebar.png`.
+- Sidebar shows every entry of `claude agents --json`, grouped by cwd, with state and RSS; row count equals `claude agents --json | jq length` at test time. Screenshot taken at test time (removed from the repo: it showed real session names).
 - Clicking a hibernated / not-open session opens a pane running `claude --resume <id>` in its cwd.
 - 8 panes open: app RSS (ClaudeTerm process only) < 150 MB, measured with `ps -o rss= -p <app pid>`.
 - Tests: JSON decoding of both agent shapes; grouping by project; argv builder rejects non-UUID ids.

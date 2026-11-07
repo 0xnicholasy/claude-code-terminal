@@ -2,7 +2,7 @@
 
 Status: all five build steps are implemented (2026-11-07). Screenshot: `docs/screens/demo.png`. One difference from the proposal: the "freed" number counts since app launch, not since daemon start.
 
-Baseline: `docs/screens/integration-sidebar.png`. The current window is a stock `NavigationSplitView`: a sidebar of sessions grouped by project, a single pane area, and two toolbar buttons (new session, close pane). It works, but it hides the two things the app exists for, memory and session state, and it treats every session the same.
+Baseline: the original stock layout (screenshot removed: it showed real session names). The current window is a stock `NavigationSplitView`: a sidebar of sessions grouped by project, a single pane area, and two toolbar buttons (new session, close pane). It works, but it hides the two things the app exists for, memory and session state, and it treats every session the same.
 
 ## Problems in the current design
 
