@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // Usage tab: plan quota from `codexbar` and API-equivalent cost from `ccusage`. Both are optional
@@ -112,6 +113,25 @@ enum CostParser {
     }
 }
 
+enum SafeFile {
+    /// Reads a small file only when it and its parent directory belong to this user and it is a regular
+    /// file (not a symlink, FIFO or device) under `maxBytes`. Some inputs live under the shared `/tmp`, where
+    /// another local user could plant a file or a FIFO that would block the read.
+    static func read(_ url: URL, maxBytes: Int = 4 * 1024 * 1024) -> Data? {
+        var st = stat(), dir = stat()
+        let uid = getuid()
+        guard lstat(url.path, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_uid == uid, st.st_size <= maxBytes,
+              lstat(url.deletingLastPathComponent().path, &dir) == 0, (dir.st_mode & S_IFMT) == S_IFDIR, dir.st_uid == uid
+        else { return nil }
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var fst = stat()
+        guard fstat(fd, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG, fst.st_ino == st.st_ino else { return nil }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: false).readData(ofLength: maxBytes)
+    }
+}
+
 enum UsageTools {
     static var home: String { NSHomeDirectory() }
     /// GUI apps do not inherit the login PATH; these are the usual install locations.
@@ -176,16 +196,16 @@ final class UsageModel: ObservableObject {
     /// runs `ccusage daily` for this month at most every 30 minutes and caches the result.
     private func refreshCosts() async {
         var days: [String: Double] = [:]
-        if let data = try? Data(contentsOf: UsageTools.ledgerURL), let ledger = CostParser.ledger(data) {
+        if let data = SafeFile.read(UsageTools.ledgerURL), let ledger = CostParser.ledger(data) {
             days = ledger
-            if let t = try? Data(contentsOf: UsageTools.todayCacheURL), let today = CostParser.todayCost(t) {
+            if let t = SafeFile.read(UsageTools.todayCacheURL), let today = CostParser.todayCost(t) {
                 days[CostHistory.dayKey(Date())] = today
             }
             costs = CostHistory(days: days)
             costMissingTool = false
             return
         }
-        if let data = try? Data(contentsOf: UsageTools.ownCacheURL), let cached = CostParser.ccusageDaily(data) {
+        if let data = SafeFile.read(UsageTools.ownCacheURL), let cached = CostParser.ccusageDaily(data) {
             costs = CostHistory(days: cached)
         }
         if let last = lastCostScan, Date().timeIntervalSince(last) < 30 * 60 { return }

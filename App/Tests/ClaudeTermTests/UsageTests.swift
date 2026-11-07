@@ -40,4 +40,21 @@ struct UsageTests {
         #expect(CostParser.todayCost(Data(#"{"id":"x","todayCost":98.7}"#.utf8)) == 98.7)
         #expect(CostParser.ccusageDaily(Data("not json".utf8)) == nil)
     }
+
+    @Test func safeFileRejectsFifoSymlinkAndOversizeButReadsOwnFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ccterm-test/safefile-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let good = dir.appendingPathComponent("ok.json")
+        try Data(#"{"todayCost":1}"#.utf8).write(to: good)
+        #expect(SafeFile.read(good) == Data(#"{"todayCost":1}"#.utf8))
+        #expect(SafeFile.read(good, maxBytes: 3) == nil)
+        let fifo = dir.appendingPathComponent("fifo.json")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(SafeFile.read(fifo) == nil) // returns instead of blocking on a FIFO
+        let link = dir.appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: good)
+        #expect(SafeFile.read(link) == nil)
+        #expect(SafeFile.read(dir.appendingPathComponent("missing.json")) == nil)
+    }
 }
