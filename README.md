@@ -27,6 +27,7 @@ A native macOS terminal for running many Claude Code sessions at once. It comes 
 | Daemon status | A dot in the toolbar: filled when connected to `ccgovd`, hollow when polling. |
 | Row menu | Right-click: Open, Close Pane, Pin (never hibernate), Hibernate Now, Reveal Folder, Copy Resume Command. |
 | Pane status strip | One line under the terminal: session, folder (click to reveal), memory, `bg` when demoted. |
+| Usage tab | Plan quota as progress bars (5-hour and weekly windows, with an even-pace marker and reset time) from [CodexBar](https://codexbar.app/), and API-equivalent cost this month, today and for each of the last 30 days from [ccusage](https://github.com/ryoppippi/ccusage). Both tools are optional; the app only reads their output. |
 | Notices | Short messages appear as a banner over the pane and clear after 6 s. Nothing blocks the window. |
 | Panes | Each pane runs `claude` in a project folder. One pane is shown at a time; switch from the sidebar. With no pane open, the three most recent sessions are listed for one-click reopen. |
 | New session | Toolbar `+` or Cmd-N asks for a folder and starts a new `claude` there. Cmd-Shift-W closes the pane. |
@@ -75,6 +76,7 @@ How to reproduce: `scripts/fleet.sh start 8`, then `scripts/fleet.sh rss`, then 
 - macOS 14 or later (built and tested on macOS 27).
 - Xcode with Swift 6, and [xcodegen](https://github.com/yonaskolb/XcodeGen).
 - Claude Code with `claude agents --json` (tested on 2.1.319).
+- Optional, for the Usage tab: `codexbar` (quota) and `ccusage` (cost). If a ccusage-based status line already keeps `~/.cache/claude-statusline/ccusage-daily.json`, the app reads that instead of running a second scan.
 
 ## Build and run
 

@@ -3,22 +3,45 @@ import CCProtocol
 import GhosttyTerminal
 import SwiftUI
 
+enum DetailTab: String, CaseIterable, Identifiable {
+    case sessions = "Sessions"
+    case usage = "Usage"
+    var id: String { rawValue }
+}
+
 struct ContentView: View {
     @ObservedObject var model: WorkspaceModel
+    @StateObject private var usage = UsageModel()
+    @State private var tab: DetailTab = .sessions
 
     var body: some View {
         NavigationSplitView {
             SidebarView(model: model)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 290)
         } detail: {
-            VStack(spacing: 0) {
-                PaneArea(model: model)
-                if let session = model.selectedSession { PaneStatusStrip(session: session) }
+            ZStack {
+                // Panes stay mounted under the Usage tab so their terminals keep running untouched.
+                VStack(spacing: 0) {
+                    PaneArea(model: model)
+                    if let session = model.selectedSession { PaneStatusStrip(session: session) }
+                }
+                if tab == .usage {
+                    UsageView(usage: usage).background(Color(nsColor: .windowBackgroundColor))
+                }
             }
             .overlay(alignment: .top) { NoticeBanner(model: model) }
         }
         .navigationTitle("")
+        .onChange(of: model.selectedID) { _, _ in tab = .sessions }
+        .task { if !Bootstrap.isUnderTest { usage.start() } }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("View", selection: $tab) {
+                    ForEach(DetailTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
             ToolbarItem(placement: .principal) {
                 MemorySummaryView(summary: model.summary, daemonConnected: model.daemonConnected)
             }
