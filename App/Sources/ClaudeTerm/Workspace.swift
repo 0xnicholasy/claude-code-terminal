@@ -155,8 +155,10 @@ final class WorkspaceModel: ObservableObject {
             notice = "This background session is managed by Claude itself; it is not opened here."
             return
         }
-        if let pid = session.pid, session.kind == .interactive {
-            notice = "This session is running in another terminal (pid \(pid)). Close it there first to open it here."
+        if session.kind == .interactive {
+            // A live interactive record without a pid is still live; resuming it would start a duplicate process.
+            let where_ = session.pid.map { "another terminal (pid \($0))" } ?? "another terminal"
+            notice = "This session is running in \(where_). Close it there first to open it here."
             return
         }
         let title = session.name ?? (session.cwd as NSString).lastPathComponent
@@ -205,6 +207,7 @@ final class WorkspaceModel: ObservableObject {
                 return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title, origin: .resume)
             }
             windowFrameForRestore = window.frame
+            windowFrame = window.frame // set before select() persists, so the saved frame is not overwritten with nil
             if let sel = window.selected, panes.contains(where: { $0.id == sel }) {
                 select(sel)
             }

@@ -26,7 +26,13 @@ enum ProcessRunner {
                     cont.resume(returning: nil)
                     return
                 }
-                let killer = DispatchWorkItem { if proc.isRunning { proc.terminate() } }
+                let pid = proc.processIdentifier
+                let killer = DispatchWorkItem {
+                    guard proc.isRunning else { return }
+                    proc.terminate()
+                    // Our own child: escalate if it ignores SIGTERM, so the pipe read below returns.
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if proc.isRunning { kill(pid, SIGKILL) } }
+                }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
                 let data = out.fileHandleForReading.readDataToEndOfFile()
                 proc.waitUntilExit()

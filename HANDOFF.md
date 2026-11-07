@@ -1,23 +1,21 @@
 # HANDOFF
 
 ## Done
-- Repo + private GitHub repo `0xnicholasy/claude-code-terminal`, SPEC.md, `Protocol/` (CCProtocol, tests green), `scripts/fleet.sh` (throwaway fleet: start/pids/rss/stop, verified on 1 session: 846,448 KB tree RSS, stop leaves nothing).
-
-- M1-M4, integration, memory target: done and verified (see STATE.md for numbers).
+- M3, M4, M1, M2, integration, memory target (M5 not needed), final review gate. Proof and numbers in STATE.md.
+- Gates green: Protocol 7, ccgovd 26, app 23 tests.
 
 ## In progress
-- Final gate: code review, security review, verifier, codex on the full diff.
+- Nothing.
 
 ## Next
-1. Fix every correctness and security finding, re-run gates, push.
-2. Final report.
+1. User live validation: `make install-daemon`, then the hooks snippet (see final report / `ccgovd/hooks/README.md`).
+2. Follow-ups: paginate large sessions snapshots; start-time revalidation in `scripts/fleet.sh stop`; window frame size on relaunch (SwiftUI may override it).
 
 ## Open decisions
-- None blocking. Codex plan review skipped (usage limit); retry on final diff.
+- Default install is read-only; governing needs `GOVERN=1`.
 
 ## Resume commands
 ```
-cd /Users/hotingyuen/Desktop/claude-projects/claude-code-terminal && git worktree list && git log --oneline --all | head -20
 cd /Users/hotingyuen/Desktop/claude-projects/claude-code-terminal/Protocol && swift test
 cd /Users/hotingyuen/Desktop/claude-projects/claude-code-terminal/ccgovd && swift build && swift test
 cd /Users/hotingyuen/Desktop/claude-projects/claude-code-terminal/App && xcodegen generate && xcodebuild -scheme ClaudeTerm -destination 'platform=macOS' build test

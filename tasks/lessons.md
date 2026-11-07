@@ -11,3 +11,5 @@
 - A one-shot CLI action that runs in-process must not run the full policy cycle; it would act on every other in-scope session.
 - Server-side socket writes from a serial state queue need SO_SNDTIMEO, or one stalled subscriber freezes the daemon.
 - Validate shell-parsed strings with an allowlist of inert characters, not a denylist (braces, tildes and globs still expand).
+- `scripts/fleet.sh pids` prints `pid uuid dir` rows; take column 1 before building `--allow-pids`, or the daemon refuses the allowlist and does nothing.
+- A pid-reuse check on a descendant is incomplete unless the root itself is revalidated: a reused root pid makes the parent-chain check vouch for a stranger's children.

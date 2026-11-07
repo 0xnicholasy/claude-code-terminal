@@ -48,7 +48,7 @@ The binary is `~/.local/bin/claude` (symlink into `~/.local/share/claude/version
 - `SocketPath.default`: `~/Library/Application Support/ccgovd/ccgovd.sock`; env override `CCGOVD_SOCKET`. Directory mode 0700, socket mode 0600, owner = current uid.
 - `sessionId` must match the UUID regex before it is used in any argv or path. Reject otherwise.
 
-## 4. Socket protocol (unix stream socket, newline-delimited JSON, UTF-8, max line 64 KiB)
+## 4. Socket protocol (unix stream socket, newline-delimited JSON, UTF-8, max request line 64 KiB; daemon-to-client event lines may reach 1 MiB, the app's read cap, because a full sessions snapshot can exceed 64 KiB)
 
 Request: `{"id":"<client id>","cmd":"<cmd>","sessionId":"<uuid>"?,"pids":[int]?,"hook":{...}?}`
 
@@ -84,7 +84,7 @@ Unknown `cmd`, malformed JSON, oversize line: `ok:false` with an error, connecti
   2. Identity: the pid's current start time equals the start time recorded when it was first seen for that session; comm is `claude` for the root (descendants: start time recorded in the same metrics pass). Mismatch = pid reused, refuse.
   3. Scope: pid is the root of a known interactive session or one of its descendants in the current pass.
   4. **Test mode**: when an allowlist is configured (`--allow-pids` or `CCGOVD_ALLOW_PIDS`, roots; descendants of allowlisted roots are allowed), any pid outside it is refused and logged. `--scope-cwd-prefix <path>` additionally restricts governing to sessions whose cwd is under the prefix.
-- **Safety default**: without `--govern`, the daemon only indexes and measures (read-only). The launchd plist passes `--govern`.
+- **Safety default**: without `--govern`, the daemon only indexes and measures (read-only). `make install-daemon` installs a read-only plist; `make install-daemon GOVERN=1` adds `--govern` (changed after security review: governing every real session should be an explicit opt-in).
 - **CLI**: `ccgovd run [--govern] [--interval s] [--idle-minutes n|--idle-seconds n] [--socket p] [--db p] [--allow-pids a,b] [--scope-cwd-prefix p] [--once]`; `ccgovd status [--json]` (socket if daemon is up, otherwise one-shot index+metrics in-process); `ccgovd demote|restore|hibernate|pin|unpin|resume <sessionId>`; `ccgovd hook` (reads hook JSON on stdin, forwards to socket, always exits 0 within 1 s).
 - `status` table columns: SESSION (8 chars), PROJECT (cwd basename), STATE, PID, RSS MB, CPU%, CHILDREN, FLAGS (P=pinned, D=demoted, F=focused); last line TOTAL.
 

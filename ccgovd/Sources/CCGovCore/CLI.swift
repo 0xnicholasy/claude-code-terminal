@@ -57,14 +57,14 @@ public enum CLI {
         c.govern = p.flags.contains("govern")
         c.once = p.flags.contains("once")
         if let s = p.values["interval"] {
-            guard let d = Double(s), d > 0 else { throw CLIError("bad --interval") }
+            guard let d = Double(s), d.isFinite, d > 0, d < 86_400 else { throw CLIError("bad --interval") }
             c.intervalSec = d
         }
         if let s = p.values["idle-seconds"] {
-            guard let n = Double(s), n >= 0 else { throw CLIError("bad --idle-seconds") }
+            guard let n = Double(s), n.isFinite, n >= 0, n * 1000 < 1e15 else { throw CLIError("bad --idle-seconds") }
             c.idleMs = Int64(n * 1000)
         } else if let s = p.values["idle-minutes"] {
-            guard let n = Double(s), n >= 0 else { throw CLIError("bad --idle-minutes") }
+            guard let n = Double(s), n.isFinite, n >= 0, n * 60_000 < 1e15 else { throw CLIError("bad --idle-minutes") }
             c.idleMs = Int64(n * 60_000)
         }
         if let s = p.values["socket"] { c.socketPath = s } else { c.socketPath = SocketPath.resolve(environment: environment) }

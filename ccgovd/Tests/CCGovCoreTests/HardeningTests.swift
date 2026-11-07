@@ -47,4 +47,49 @@ import CCProtocol
                                       policy: GovernPolicy(demoteAfterMs: 60_000, hibernateAfterMs: 30 * 60_000))
         #expect(actions.contains(.restore(sidA)))
     }
+
+    @Test func descendantOfReusedRootPidIsNeverSignalled() {
+        // Root pid 500 was reused by a new process (start 2000); 501 matches the recorded start time and hangs
+        // off the new 500. The parent chain reaches pid 500, but the root is no longer the recorded claude.
+        let table = FakeTable([rec(500, 1, "claude", start: 2000), rec(501, 500, "node")])
+        let sender = RecordingSender()
+        let gate = SignalGate(sender: sender, table: table, selfPid: 99)
+        let t = target(root: 500, pids: [500, 501])
+        #expect(!gate.kill(pid: 501, signal: SIGTERM, target: t))
+        #expect(!gate.setBackground(pid: 501, background: true, target: t))
+        #expect(!sender.touched)
+        // Control: with the recorded root alive, the same descendant is allowed.
+        let ok = SignalGate(sender: RecordingSender(), table: FakeTable([rec(500, 1, "claude"), rec(501, 500, "node")]), selfPid: 99)
+        #expect(ok.kill(pid: 501, signal: SIGTERM, target: t))
+    }
+
+    @Test func hibernateRefusesWhenAnUntrackedChildAppeared() {
+        // 503 (a shell) started after the tree was indexed; killing claude would orphan it.
+        let table = FakeTable([rec(500, 1, "claude"), rec(501, 500, "node"), rec(503, 500, "zsh")])
+        let sender = RecordingSender()
+        let gov = ProcessGovernor(gate: SignalGate(sender: sender, table: table, selfPid: 99), table: table, time: FakeTime())
+        let out = gov.hibernate(target: target(root: 500, pids: [500, 501]))
+        #expect(out.refused != nil && !out.complete)
+        #expect(!sender.touched)
+    }
+
+    @Test func hibernateIsIncompleteWhenATrackedChildSurvives() {
+        // The root dies on SIGTERM; child 501 is owned by another uid, so the gate refuses it and it keeps running.
+        var foreign = rec(501, 500, "node")
+        foreign.uid = getuid() &+ 1
+        let table = FakeTable([rec(500, 1, "claude"), foreign])
+        let sender = RecordingSender()
+        sender.onKill = { pid, _ in table.records.removeAll { $0.pid == pid } }
+        let gov = ProcessGovernor(gate: SignalGate(sender: sender, table: table, selfPid: 99), table: table, time: FakeTime())
+        let out = gov.hibernate(target: target(root: 500, pids: [500, 501]))
+        #expect(out.rootGone)
+        #expect(out.survivors == [501] && !out.complete)
+    }
+
+    @Test func nonFiniteOrHugeDurationsAreRejected() {
+        for args in [["--idle-seconds", "inf"], ["--idle-seconds", "1e300"], ["--idle-minutes", "nan"], ["--interval", "inf"]] {
+            #expect(throws: CLIError.self) { _ = try CLI.config(from: CLI.parse(args), environment: [:]) }
+        }
+        #expect(throws: Never.self) { _ = try CLI.config(from: CLI.parse(["--idle-seconds", "5"]), environment: [:]) }
+    }
 }

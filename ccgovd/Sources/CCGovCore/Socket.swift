@@ -70,13 +70,17 @@ public final class SocketServer {
     public let path: String
     private let handler: Handler
     private let onClose: (ClientHandle) -> Void
+    private let onSubscribed: (ClientHandle) -> Void
     private var listenFd: Int32 = -1
     private var stopping = false
 
-    public init(path: String, handler: @escaping Handler, onClose: @escaping (ClientHandle) -> Void = { _ in }) {
+    /// `onSubscribed` runs after the ok response to a subscribe has been written, so events never precede it.
+    public init(path: String, handler: @escaping Handler, onClose: @escaping (ClientHandle) -> Void = { _ in },
+                onSubscribed: @escaping (ClientHandle) -> Void = { _ in }) {
         self.path = path
         self.handler = handler
         self.onClose = onClose
+        self.onSubscribed = onSubscribed
     }
 
     public func start() throws {
@@ -156,7 +160,9 @@ public final class SocketServer {
                 buf.removeSubrange(buf.startIndex...nl)
                 if line.count > WireLine.maxBytes { return oversize(client) }
                 if line.isEmpty { continue }
-                client.send(respond(to: line, client: client))
+                let (resp, cmd) = respond(to: line, client: client)
+                client.send(resp)
+                if cmd == .subscribe && resp.ok { onSubscribed(client) }
             }
             if buf.count > WireLine.maxBytes { return oversize(client) }
         }
@@ -177,14 +183,14 @@ public final class SocketServer {
         }
     }
 
-    private func respond(to line: Data, client: ClientHandle) -> Response {
+    private func respond(to line: Data, client: ClientHandle) -> (Response, Command?) {
         do {
             let req = try WireLine.decode(Request.self, from: line)
-            return handler(req, client)
+            return (handler(req, client), req.cmd)
         } catch {
             var id = ""
             if let obj = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let s = obj["id"] as? String { id = s }
-            return Response(id: id, ok: false, error: "malformed or unknown request")
+            return (Response(id: id, ok: false, error: "malformed or unknown request"), nil)
         }
     }
 }

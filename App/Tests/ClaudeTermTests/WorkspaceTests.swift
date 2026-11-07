@@ -63,6 +63,27 @@ struct WorkspaceTests {
         #expect(m.panes.first { $0.id == b }?.launched?.cwd == "/w/b")
     }
 
+    @Test func restoreKeepsTheSavedWindowFrameOnDisk() throws {
+        let url = scratchURL()
+        let frame = LayoutFrame(x: 10, y: 20, width: 1000, height: 640)
+        try LayoutStore(url: url).save(LayoutFile(windows: [WindowRecord(
+            panes: [PaneRecord(sessionId: a, cwd: "/w/a", title: "A")], selected: a, frame: frame)]))
+        let m = model(url)
+        m.restore() // select() persists during restore; the frame must survive that write
+        guard case let .loaded(after) = LayoutStore(url: url).load() else {
+            Issue.record("layout not written")
+            return
+        }
+        #expect(after.windows.first?.frame == frame)
+    }
+
+    @Test func liveInteractiveSessionWithoutPidIsNotResumed() {
+        let m = model(scratchURL())
+        m.open(SessionInfo(sessionId: a, cwd: "/w/a", kind: .interactive, state: .idle))
+        #expect(m.panes.isEmpty)
+        #expect(m.notice != nil)
+    }
+
     @Test func launchOnRestoreOnlyForTheSavedSelection() throws {
         let url = scratchURL()
         try LayoutStore(url: url).save(LayoutFile(windows: [WindowRecord(

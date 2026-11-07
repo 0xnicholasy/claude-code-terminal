@@ -135,15 +135,22 @@ public final class SignalGate {
         guard now.uid == ownUid else { return .refuse("pid \(pid) is owned by uid \(now.uid), not \(ownUid)") }
         if pid == target.rootPid {
             guard Self.isClaudeComm(now.comm, expected: rootComm) else { return .refuse("root pid \(pid) comm '\(now.comm)' != '\(rootComm)'") }
-        } else {
-            // Descendant: its parent chain must reach the session root in the live table.
+        } else if !orphanOK {
+            // Descendant: the root must still be the recorded claude process (a reused root pid would make
+            // the parent-chain check below vouch for a stranger's children), and the chain must reach it.
+            guard let rootNow = byPid[target.rootPid],
+                  rootNow.startTime == target.recordedStartTimes[target.rootPid],
+                  rootNow.uid == ownUid,
+                  Self.isClaudeComm(rootNow.comm, expected: rootComm) else {
+                return .refuse("pid \(pid): root \(target.rootPid) is gone or no longer the recorded claude process")
+            }
             var cur = now, hops = 0, reached = false
             while hops < 64, let parent = byPid[cur.ppid] {
                 if parent.pid == target.rootPid { reached = true; break }
                 cur = parent
                 hops += 1
             }
-            guard reached || orphanOK else { return .refuse("pid \(pid) is not a descendant of root \(target.rootPid)") }
+            guard reached else { return .refuse("pid \(pid) is not a descendant of root \(target.rootPid)") }
         }
         return .allow
     }
@@ -182,6 +189,10 @@ public struct HibernateOutcome: Equatable {
     public var survivors: [Int32]
     public var rssFreedBytes: UInt64
     public var rootGone: Bool
+    /// Set when hibernate refused to start; nothing was signalled.
+    public var refused: String? = nil
+    /// Success means the root exited and no tracked process is left running.
+    public var complete: Bool { refused == nil && rootGone && survivors.isEmpty }
 }
 
 /// Demote/restore and hibernate execution. Every effect is routed through the gate.
@@ -208,6 +219,11 @@ public final class ProcessGovernor {
         return PriorityOutcome(results: results)
     }
 
+    /// True while `pid` is still the same process recorded in the target (pid + start time).
+    public func stillAlive(_ pid: Int32, target: GovernTarget) -> Bool {
+        !alive([pid], target: target).isEmpty
+    }
+
     private func alive(_ pids: [Int32], target: GovernTarget) -> [Int32] {
         let current = table.snapshot()
         var byPid: [Int32: ProcessRecord] = [:]
@@ -218,6 +234,12 @@ public final class ProcessGovernor {
     /// SIGTERM children first then the root, wait, SIGKILL survivors that still pass the gate.
     public func hibernate(target: GovernTarget) -> HibernateOutcome {
         let current = table.snapshot()
+        // The target tree was captured at index time. Refuse if the root now has a descendant the tree does not
+        // know about (for example a shell or command started since): killing claude would orphan it.
+        if let unknown = Self.untrackedDescendant(of: target, in: current) {
+            return HibernateOutcome(terminated: [], killed: [], survivors: [], rssFreedBytes: 0, rootGone: false,
+                                    refused: "pid \(unknown) appeared under the session since it was indexed")
+        }
         var rss: [Int32: UInt64] = [:]
         for r in current { rss[r.pid] = r.rssBytes }
         let order = Array(target.pids.reversed()) // deepest first, root last
@@ -239,7 +261,21 @@ public final class ProcessGovernor {
         }
         let gone = Set(terminated).subtracting(left)
         let freed = gone.reduce(UInt64(0)) { $0 + (rss[$1] ?? 0) }
-        return HibernateOutcome(terminated: terminated, killed: killed, survivors: left,
+        // Survivors are every tracked process still alive, including ones the gate refused to signal.
+        let survivors = alive(target.pids, target: target)
+        return HibernateOutcome(terminated: terminated, killed: killed, survivors: survivors,
                                 rssFreedBytes: freed, rootGone: gone.contains(target.rootPid))
+    }
+
+    static func untrackedDescendant(of target: GovernTarget, in current: [ProcessRecord]) -> Int32? {
+        var children: [Int32: [Int32]] = [:]
+        for r in current { children[r.ppid, default: []].append(r.pid) }
+        var stack = children[target.rootPid] ?? []
+        var seen = Set<Int32>()
+        while let pid = stack.popLast(), seen.insert(pid).inserted {
+            if !target.pids.contains(pid) { return pid }
+            stack.append(contentsOf: children[pid] ?? [])
+        }
+        return nil
     }
 }

@@ -68,6 +68,9 @@ public final class Daemon {
                                },
                                onClose: { [weak self] client in
                                    self?.q.async { self?.subscribers[ObjectIdentifier(client)] = nil }
+                               },
+                               onSubscribed: { [weak self] client in
+                                   self?.q.async { self?.addSubscriber(client) }
                                })
         try srv.start()
         server = srv
@@ -133,7 +136,9 @@ public final class Daemon {
         let out = governor.setBackground(background, target: target)
         let detail = out.results.map { "\($0.pid):\($0.applied ? ($0.verified ? "ok" : "unverified") : "refused")" }.joined(separator: " ")
         let rootOK = out.results.first(where: { $0.pid == target.rootPid })?.verified ?? false
-        if rootOK {
+        // Every tracked process still alive must carry the new priority; one that exited meanwhile is fine.
+        let treeOK = out.results.allSatisfy { $0.verified || !governor.stillAlive($0.pid, target: target) }
+        if rootOK && treeOK {
             try? store.setDemoted(id, background)
             log("\(background ? "demoted" : "restored") \(id.prefix(8)) [\(detail)]")
             broadcast(Event(event: background ? .demoted : .restored, sessionId: id))
@@ -147,9 +152,10 @@ public final class Daemon {
         guard config.govern else { return (false, "read-only: start the daemon with --govern") }
         guard let target = snapshot.targets[id] else { return (false, "session is not a live interactive session") }
         let out = governor.hibernate(target: target)
-        guard out.rootGone else {
-            log("hibernate \(id.prefix(8)) failed: root still alive or refused (survivors \(out.survivors))")
-            return (false, "root process not terminated (refused by gate or still alive)")
+        guard out.complete else {
+            let why = out.refused ?? "root gone: \(out.rootGone), survivors \(out.survivors)"
+            log("hibernate \(id.prefix(8)) failed: \(why)")
+            return (false, "not hibernated: \(why)")
         }
         try? store.markHibernated(id, atMs: time.nowMs())
         let mb = Double(out.rssFreedBytes) / 1_048_576
@@ -157,6 +163,11 @@ public final class Daemon {
                    String(id.prefix(8)), mb, out.terminated.count, out.killed.count))
         broadcast(Event(event: .hibernated, sessionId: id))
         return (true, "")
+    }
+
+    private func addSubscriber(_ client: ClientHandle) {
+        subscribers[ObjectIdentifier(client)] = client
+        _ = client.send(Event(event: .sessions, sessions: snapshot.sessions))
     }
 
     private func broadcast<T: Encodable>(_ event: T) {
@@ -180,10 +191,8 @@ public final class Daemon {
             snapshot = index.repoll(focused: focused, owned: owned)
             return Response(id: req.id, ok: true, sessions: snapshot.sessions, totals: snapshot.totals)
         case .subscribe:
-            guard let client else { return fail("subscribe needs a connection") }
-            subscribers[ObjectIdentifier(client)] = client
-            let initial = Event(event: .sessions, sessions: snapshot.sessions)
-            q.async { client.send(initial) }
+            // Registration happens in addSubscriber, after the server has written this response.
+            guard client != nil else { return fail("subscribe needs a connection") }
             return ok()
         case .hook:
             guard let h = req.hook, SessionID.isValid(h.sessionId) else { return fail("hook needs a valid session_id") }
