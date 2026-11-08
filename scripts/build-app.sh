@@ -23,10 +23,16 @@ cp -R "$ROOT/build/DerivedData/Build/Products/Release/ClaudeTerm.app" "$ROOT/bui
 # so macOS forgets ClaudeTerm's folder permissions (Desktop, Documents) after each update; a
 # certificate signature keeps the same identity across builds. CLAUDETERM_SIGN_IDENTITY picks one
 # (a SHA-1 hash or name); otherwise the first valid "Apple Development" identity is used.
-IDENTITY="${CLAUDETERM_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
-  | awk '/"Apple Development:/ { print $2; exit }')}"
+# Homebrew points HOME at a temporary folder, so name the login keychain from the account's real
+# home directory (from the user database, not $HOME).
+REAL_HOME="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{ print $2 }')"
+KEYCHAIN="${REAL_HOME:-$HOME}/Library/Keychains/login.keychain-db"
+# Not `-v`: with HOME moved, security cannot reach the issuer chain to validate, so expired
+# identities are skipped by their CSSMERR suffix instead.
+IDENTITY="${CLAUDETERM_SIGN_IDENTITY:-$(security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null \
+  | awk '/"Apple Development:/ && !/CSSMERR/ { print $2; exit }')}"
 if [ -n "$IDENTITY" ]; then
-  codesign --force --deep --sign "$IDENTITY" "$ROOT/build/ClaudeTerm.app"
+  codesign --force --deep --keychain "$KEYCHAIN" --sign "$IDENTITY" "$ROOT/build/ClaudeTerm.app"
   echo "Signed with $IDENTITY"
 else
   echo "No signing certificate found; ad-hoc signature (folder permissions reset on each update)"
