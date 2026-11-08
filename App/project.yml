@@ -34,8 +34,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: ClaudeTerm
         # Keep equal to the release tag (v0.1.9 -> 0.1.9); the About window and update check read it.
-        MARKETING_VERSION: "0.1.11"
-        CURRENT_PROJECT_VERSION: "11"
+        MARKETING_VERSION: "0.1.12"
+        CURRENT_PROJECT_VERSION: "12"
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright 2026 0xnicholasy"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
