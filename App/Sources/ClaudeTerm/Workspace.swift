@@ -44,7 +44,8 @@ final class Pane: ObservableObject, Identifiable {
     /// The same applies to Ghostty's tab and split keybinds, which would swallow the app's Go menu.
     /// Names as `ghostty +list-keybinds --default` prints them (Ghostty 1.x).
     static let unboundKeys = ["super+q", "super+n", "super+shift+w", "ctrl+tab", "ctrl+shift+tab",
-                              "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down"]
+                              "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down",
+                              "super+shift+v", "super+shift+m"]
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
     /// The library's default theme, with an amber selection instead of its grey one. Theme commands are
     /// applied after the builder's, so selection colours set in the builder would be overwritten.

@@ -17,6 +17,16 @@ struct QuotaWindow: Equatable {
         let left = min(window, max(0, resetsAt.timeIntervalSince(now)))
         return (window - left) / window * 100
     }
+
+    /// Usage at reset if the current rate holds. Nil until 5% of the window (at least an hour) has
+    /// passed, because an early extrapolation swings wildly.
+    func projectedPercent(now: Date) -> Double? {
+        guard let resetsAt, windowMinutes > 0 else { return nil }
+        let window = Double(windowMinutes) * 60
+        let elapsed = window - min(window, max(0, resetsAt.timeIntervalSince(now)))
+        guard elapsed >= max(3600, window * 0.05) else { return nil }
+        return usedPercent * window / elapsed
+    }
 }
 
 struct ScopedQuota: Equatable {
@@ -216,6 +226,13 @@ struct CostHistory: Equatable {
     func monthTotal(now: Date, calendar: Calendar = .current) -> Double {
         let prefix = String(Self.dayKey(now, calendar: calendar).prefix(8)) // "yyyy-MM-"
         return days.filter { $0.key.hasPrefix(prefix) }.reduce(0) { $0 + $1.value }
+    }
+
+    /// Month total at month end if the daily average so far holds.
+    func projectedMonthTotal(now: Date, calendar: Calendar = .current) -> Double {
+        let day = calendar.component(.day, from: now)
+        let length = calendar.range(of: .day, in: .month, for: now)?.count ?? 30
+        return monthTotal(now: now, calendar: calendar) / Double(max(1, day)) * Double(length)
     }
 
     func today(now: Date, calendar: Calendar = .current) -> Double {

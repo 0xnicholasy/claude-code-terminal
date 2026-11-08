@@ -13,6 +13,10 @@ enum DetailTab: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @ObservedObject var model: WorkspaceModel
     @ObservedObject var usage: UsageModel
+    @ObservedObject var clipboard: ClipboardModel
+    @StateObject private var git = GitStatusModel()
+    @StateObject private var replies = RepliesModel()
+    @AppStorage(RepliesModel.enabledKey) private var showReplies = true
 
     var body: some View {
         NavigationSplitView {
@@ -22,7 +26,7 @@ struct ContentView: View {
             ZStack {
                 // Panes stay mounted under the Usage tab so their terminals keep running untouched.
                 VStack(spacing: 0) {
-                    PaneArea(model: model)
+                    PaneArea(model: model, replies: showReplies && model.selectedID != nil ? replies : nil)
                     if let session = model.selectedSession { PaneStatusStrip(session: session, model: model) }
                 }
                 if model.tab == .usage {
@@ -34,6 +38,12 @@ struct ContentView: View {
         .navigationTitle("")
         .onChange(of: model.selectedID) { _, _ in model.tab = .sessions }
         .task { if !Bootstrap.isUnderTest { usage.start() } }
+        .onChange(of: model.selectedSession?.cwd, initial: true) { _, cwd in
+            if !Bootstrap.isUnderTest { git.track(cwd) }
+        }
+        .onChange(of: showReplies ? model.selectedID : nil, initial: true) { _, id in
+            if !Bootstrap.isUnderTest { replies.track(id) }
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Picker("View", selection: $model.tab) {
@@ -45,12 +55,25 @@ struct ContentView: View {
                        Shortcuts.hint("Switch", Shortcuts.toggleTab)].joined(separator: "\n"))
             }
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 16) {
+                // fixedSize: the toolbar must never truncate these to "US..." or pad them apart.
+                HStack(spacing: 18) {
                     MemorySummaryView(summary: model.summary, daemonConnected: model.daemonConnected)
-                    Divider().frame(height: 14)
-                    QuotaChip(quota: usage.quota)
+                    if let status = git.status { GitChip(status: status) }
+                    QuotaChip(quota: usage.quota, costs: usage.costs)
                 }
-                .padding(.horizontal, 8)
+                .fixedSize()
+                .padding(.horizontal, 10)
+            }
+            ToolbarItem {
+                ClipboardButton(clipboard: clipboard)
+            }
+            ToolbarItem {
+                Toggle(isOn: $showReplies) {
+                    Label("Formatted Output", systemImage: "text.document")
+                }
+                .toggleStyle(.button)
+                .help(Shortcuts.hint(showReplies ? "Formatted output on: Claude's markdown rendered in the pane. Turn off to stop reading the transcript"
+                                                 : "Render Claude's markdown output in the pane", Shortcuts.replies))
             }
             ToolbarItem {
                 Button {
@@ -313,17 +336,31 @@ struct RowMenu: View {
 
 // MARK: Pane area
 
+/// With Formatted Output on (`replies` set), the conversation fills the pane and the live terminal
+/// shrinks to a strip at the bottom for typing, permission prompts and menus. The terminals stay in
+/// the same place in the view tree either way, so toggling only resizes them; it never restarts them.
 struct PaneArea: View {
     @ObservedObject var model: WorkspaceModel
+    var replies: RepliesModel?
 
     var body: some View {
-        ZStack {
-            ForEach(model.panes.filter(\.hasProcess)) { pane in
-                PaneView(pane: pane, isSelected: pane.id == model.selectedID)
+        VStack(spacing: 0) {
+            if let replies {
+                ConversationView(replies: replies)
+                Divider()
             }
-            if model.selectedID == nil { EmptyState(model: model) }
+            ZStack {
+                ForEach(model.panes.filter(\.hasProcess)) { pane in
+                    PaneView(pane: pane, isSelected: pane.id == model.selectedID)
+                }
+                if model.selectedID == nil { EmptyState(model: model) }
+            }
+            .frame(height: replies == nil ? nil : Self.stripHeight)
         }
     }
+
+    /// About 16 rows: enough for Claude Code's input box, status line and a permission prompt.
+    static let stripHeight: CGFloat = 300
 }
 
 struct EmptyState: View {

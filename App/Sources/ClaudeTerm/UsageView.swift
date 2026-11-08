@@ -149,43 +149,87 @@ struct QuotaBar: View {
     }
 }
 
-/// Compact quota shown in the toolbar on every tab.
+/// Compact quota and cost shown in the toolbar on every tab. A window Claude Code does not report
+/// (the 5-hour one on plans without it) is left out rather than shown empty.
 struct QuotaChip: View {
     let quota: QuotaSnapshot?
+    let costs: CostHistory?
 
     var body: some View {
-        HStack(spacing: 10) {
-            item("5h", quota?.fiveHour)
-            item("wk", quota?.weekly)
+        let now = Date()
+        HStack(spacing: 18) {
+            if let q = quota {
+                if let w = q.fiveHour { item("5h", "5-hour window", w, now: now) }
+                if let w = q.weekly { item("wk", "Weekly limit", w, now: now) }
+            } else {
+                Text("wk --").foregroundStyle(.secondary).help("Weekly limit: loading")
+            }
+            if let c = costs { cost(c, now: now) }
         }
         .font(.callout.monospacedDigit())
-        .padding(.horizontal, 6)
     }
 
-    @ViewBuilder private func item(_ label: String, _ w: QuotaWindow?) -> some View {
-        HStack(spacing: 5) {
+    private func item(_ label: String, _ name: String, _ w: QuotaWindow, now: Date) -> some View {
+        let projected = w.projectedPercent(now: now)
+        return HStack(spacing: 5) {
             Text(label).foregroundStyle(.secondary)
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary)
-                if let w {
-                    Capsule().fill(QuotaStyle.color(w.usedPercent))
-                        .frame(width: max(2, 28 * QuotaStyle.fraction(w.usedPercent)))
-                }
+            PaceBar(window: w, now: now)
+            Text("\(Int(w.usedPercent.rounded()))%").fontWeight(.medium)
+            if let p = projected {
+                Text("\u{2192}\(Int(p.rounded()))%")
+                    .foregroundStyle(p >= 100 ? Color.red : Color.secondary)
             }
-            .frame(width: 28, height: 4)
-            Text(w.map { "\(Int($0.usedPercent.rounded()))%" } ?? "--").fontWeight(.medium)
         }
-        .help(help(label, w))
+        .help(help(name, w, projected: projected, now: now))
     }
 
-    private func help(_ label: String, _ w: QuotaWindow?) -> String {
-        let name = label == "5h" ? "5-hour window" : "Weekly limit"
-        let details = Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab)
-        guard let w else {
-            return (quota == nil ? "\(name): loading" : "\(name): no limit reported by Claude Code") + "\n" + details
+    private func cost(_ c: CostHistory, now: Date) -> some View {
+        HStack(spacing: 4) {
+            Text(Self.wholeDollars(c.today(now: now))).fontWeight(.medium)
+            Text("today").foregroundStyle(.secondary)
         }
-        return ["\(name): \(Int(w.usedPercent.rounded()))% used", QuotaStyle.resetText(w)].compactMap { $0 }
-            .joined(separator: ", ") + "\n" + details
+        .help([
+            "Today: \(Formatting.dollars(c.today(now: now)))",
+            "\(now.formatted(.dateTime.month(.wide))): \(Formatting.dollars(c.monthTotal(now: now))), on pace for \(Formatting.dollars(c.projectedMonthTotal(now: now)))",
+            "API-equivalent cost from ccusage",
+            Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab),
+        ].joined(separator: "\n"))
+    }
+
+    private func help(_ name: String, _ w: QuotaWindow, projected: Double?, now: Date) -> String {
+        var lines = [["\(name): \(Int(w.usedPercent.rounded()))% used", QuotaStyle.resetText(w, now: now)]
+            .compactMap { $0 }.joined(separator: ", ")]
+        if let e = w.expectedPercent(now: now) { lines.append("Even pace: \(Int(e.rounded()))% by now") }
+        if let p = projected { lines.append("At this rate: \(Int(p.rounded()))% at reset") }
+        lines.append(Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab))
+        return lines.joined(separator: "\n")
+    }
+
+    /// "$1,234": a fixed "$" so a non-US locale does not widen it to "US$1,234".
+    static func wholeDollars(_ v: Double) -> String {
+        "$" + Int(v.rounded()).formatted(.number.grouping(.automatic))
+    }
+}
+
+/// Fixed-size usage bar for the toolbar, with a tick at even pace. Drawn at a fixed width (no
+/// GeometryReader) so the toolbar cannot stretch or squash it.
+struct PaceBar: View {
+    let window: QuotaWindow
+    let now: Date
+    static let width: CGFloat = 36
+
+    var body: some View {
+        let used = window.usedPercent
+        ZStack(alignment: .leading) {
+            Capsule().fill(Color.primary.opacity(0.14)).frame(width: Self.width, height: 4)
+            Capsule().fill(used >= 70 ? QuotaStyle.color(used) : Color.primary.opacity(0.6))
+                .frame(width: max(3, Self.width * QuotaStyle.fraction(used)), height: 4)
+            if let e = window.expectedPercent(now: now) {
+                Capsule().fill(Palette.accent).frame(width: 2, height: 9)
+                    .offset(x: min(Self.width - 2, max(0, Self.width * QuotaStyle.fraction(e) - 1)))
+            }
+        }
+        .frame(width: Self.width, height: 9)
     }
 }
 

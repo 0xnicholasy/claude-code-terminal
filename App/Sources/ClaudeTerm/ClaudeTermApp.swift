@@ -6,12 +6,17 @@ import SwiftUI
 struct ClaudeTermApp: App {
     @StateObject private var model = Bootstrap.makeModel()
     @StateObject private var usage = Bootstrap.makeUsage()
+    @StateObject private var clipboard = ClipboardModel()
+    @AppStorage(RepliesModel.enabledKey) private var showReplies = true
 
     var body: some Scene {
         Window("ClaudeTerm", id: "main") {
-            ContentView(model: model, usage: usage)
+            ContentView(model: model, usage: usage, clipboard: clipboard)
                 .frame(minWidth: 760, minHeight: 480)
-                .task { Bootstrap.start(model) }
+                .task {
+                    Bootstrap.start(model)
+                    if !Bootstrap.isUnderTest { clipboard.start() }
+                }
         }
         .commands {
             SidebarCommands()
@@ -30,6 +35,14 @@ struct ClaudeTermApp: App {
                 }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
                 .disabled(model.selectedID == nil)
+            }
+            CommandGroup(after: .pasteboard) {
+                Button("Clipboard History") { clipboard.isShown.toggle() }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+            }
+            CommandGroup(after: .sidebar) {
+                Toggle("Formatted Output", isOn: $showReplies)
+                    .keyboardShortcut("m", modifiers: [.command, .shift])
             }
             NavigationCommands(model: model)
         }

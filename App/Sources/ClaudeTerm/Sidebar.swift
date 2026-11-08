@@ -206,6 +206,8 @@ enum Shortcuts {
     static let nextSession = option + cmd + "\u{2193}"
     static let previousSession = option + cmd + "\u{2191}"
     static let toggleSidebar = control + cmd + "S"
+    static let clipboard = shift + cmd + "V"
+    static let replies = shift + cmd + "M"
 
     /// Cmd-1 to Cmd-8 select panes 1 to 8; Cmd-9 selects the last pane.
     static func pane(index: Int, count: Int) -> String? {

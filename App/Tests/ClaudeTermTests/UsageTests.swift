@@ -34,6 +34,25 @@ struct UsageTests {
         #expect(QuotaWindow(usedPercent: 1, windowMinutes: 300, resetsAt: nil).expectedPercent(now: now) == nil)
     }
 
+    @Test func projectionExtrapolatesCurrentRateToResetButNotTooEarly() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let week = 7 * 24 * 60
+        // 2 of 7 days gone at 26% used: 26 * 7 / 2 = 91% at reset.
+        let w = QuotaWindow(usedPercent: 26, windowMinutes: week, resetsAt: now.addingTimeInterval(5 * 86400))
+        #expect(abs((w.projectedPercent(now: now) ?? 0) - 91) < 0.001)
+        // 2 hours into a week is under 5% of it: no projection yet.
+        let early = QuotaWindow(usedPercent: 3, windowMinutes: week, resetsAt: now.addingTimeInterval(Double(week) * 60 - 7200))
+        #expect(early.projectedPercent(now: now) == nil)
+    }
+
+    @Test func monthProjectionScalesDailyAverageToMonthLength() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 10, hour: 12))!
+        let h = CostHistory(days: ["2026-10-31": 999, "2026-11-01": 60, "2026-11-10": 40])
+        #expect(h.projectedMonthTotal(now: now, calendar: cal) == 300) // $100 over 10 days, 30-day month
+    }
+
     @Test func ccusageBreakdownFillsDayDetailSortedByCost() throws {
         let json = #"{"daily":[{"date":"2026-11-07","inputTokens":9685,"outputTokens":2631338,"cacheCreationTokens":29029024,"cacheReadTokens":287865041,"totalCost":230.65,"modelsUsed":["claude-opus-5-5","claude-haiku-5-5"],"modelBreakdowns":[{"modelName":"claude-haiku-5-5","cost":0.25},{"modelName":"claude-opus-5-5","cost":126.7}]}]}"#
         let h = try #require(CostParser.ccusageHistory(Data(json.utf8)))
