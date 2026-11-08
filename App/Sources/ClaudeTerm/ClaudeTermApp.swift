@@ -7,6 +7,7 @@ struct ClaudeTermApp: App {
     @StateObject private var model = Bootstrap.makeModel()
     @StateObject private var usage = Bootstrap.makeUsage()
     @StateObject private var clipboard = ClipboardModel()
+    @StateObject private var updates = UpdateModel()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
 
     var body: some Scene {
@@ -15,11 +16,21 @@ struct ClaudeTermApp: App {
                 .frame(minWidth: 760, minHeight: 480)
                 .task {
                     Bootstrap.start(model)
-                    if !Bootstrap.isUnderTest { clipboard.start() }
+                    guard !Bootstrap.isUnderTest else { return }
+                    clipboard.start()
+                    updates.startAutomatic { v in
+                        model.notice = "ClaudeTerm \(v) is available. ClaudeTerm > About ClaudeTerm to install it."
+                    }
                 }
         }
+        Window("About ClaudeTerm", id: "about") {
+            AboutView(updates: updates)
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             SidebarCommands()
+            AppInfoCommands(updates: updates)
             CommandGroup(replacing: .newItem) {
                 Button("New Session...") {
                     if let cwd = DirectoryPicker.choose() { model.newSession(cwd: cwd) }
@@ -45,6 +56,22 @@ struct ClaudeTermApp: App {
                     .keyboardShortcut("m", modifiers: [.command, .shift])
             }
             NavigationCommands(model: model)
+        }
+    }
+}
+
+/// App menu: About opens the app's own window (version, author, updates) instead of the stock panel.
+struct AppInfoCommands: Commands {
+    @ObservedObject var updates: UpdateModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About ClaudeTerm") { openWindow(id: "about") }
+            Button("Check for Updates...") {
+                openWindow(id: "about")
+                Task { await updates.check() }
+            }
         }
     }
 }
