@@ -1,8 +1,9 @@
 <p align="center"><img src="docs/assets/icon.png" width="128" alt="ClaudeTerm icon"></p>
 
-# ClaudeTerm
+<h1 align="center">ClaudeTerm</h1>
 
-A native macOS terminal for running many Claude Code sessions. It comes with `ccgovd`, a daemon that puts idle sessions to sleep so they stop using memory.
+<p align="center">A native macOS terminal for running many Claude Code sessions at once.<br>
+Ships with <code>ccgovd</code>, a daemon that puts idle sessions to sleep so they stop using memory.</p>
 
 ![ClaudeTerm](docs/screens/demo.png)
 
@@ -15,13 +16,36 @@ A native macOS terminal for running many Claude Code sessions. It comes with `cc
 
 ## Features
 
-| App | Daemon (`ccgovd`) |
-|---|---|
-| Sidebar sections: *Needs you*, *Open here*, *Elsewhere*, *Asleep* | Session index with memory and CPU per process tree |
-| Memory bar per session, totals in the toolbar | Moves unfocused idle sessions to background priority |
-| 5-hour and weekly quota in the toolbar, from Claude Code | Hibernates sessions idle for 30 min, resumes them on click |
-| Right-click: pin, hibernate, reveal, copy resume command | Read-only unless started with `--govern` |
-| Usage tab: daily cost; hover a day for tokens and models (ccusage) | Checks a process's identity before signalling it |
+### Sessions
+
+- Sidebar sections: *Needs you*, *Open here*, *Elsewhere*, *Asleep*, with a memory bar per session.
+- Take over a session running in another terminal; several sessions per project.
+- Right-click: pin, hibernate, reveal in Finder, copy the resume command.
+
+### Toolbar
+
+- Memory used by live sessions and the number asleep.
+- Git branch of the selected session, with staged, modified, untracked and conflicted counts and commits ahead or behind.
+- Weekly plan quota from Claude Code, with an even-pace marker and where you will be at reset at the current rate. The 5-hour window shows only when your plan has one.
+- Today's API-equivalent cost; hover for the month total and month-end pace.
+
+### Formatted Output
+
+Turn it on and the pane shows the conversation with Claude's replies rendered as markdown: headings, lists, code blocks, tables, quotes. The live terminal stays below it for typing, permission prompts and menus. Turned off, nothing is read.
+
+### Clipboard history
+
+The last 50 texts copied in any app, searchable from the keyboard. Kept in memory only, and copies that password managers mark as private are skipped.
+
+### Usage tab
+
+Daily cost for the last 30 days (via [ccusage](https://github.com/ryoppippi/ccusage)); hover a day for tokens and models.
+
+### Daemon (`ccgovd`)
+
+- Indexes sessions with memory and CPU per process tree.
+- Moves unfocused idle sessions to background priority, and hibernates sessions idle for 30 minutes; a click resumes them.
+- Read-only unless started with `--govern`. Checks a process's identity before signalling it.
 
 ## Shortcuts
 
@@ -33,6 +57,8 @@ A native macOS terminal for running many Claude Code sessions. It comes with `cc
 | Cmd-Ctrl-1 / 2, Cmd-Shift-U | Sessions / Usage tab |
 | Cmd-N, Cmd-Shift-N | New session, new session in this project |
 | Cmd-Shift-W, Cmd-Ctrl-S | Close pane, toggle sidebar |
+| Cmd-Shift-M | Formatted Output on / off |
+| Cmd-Shift-V | Clipboard history: type to filter, Up / Down, Return to copy, Cmd-1 ... Cmd-9 to copy a row |
 
 ## Performance
 
@@ -47,7 +73,7 @@ Idle sessions, measured on 2026-11-07.
 
 ## Install
 
-Needs macOS 14+, Xcode, Claude Code 2.1.319+, and SSH access to this repo.
+Needs macOS 14+, Xcode, Claude Code 2.1.319+, and a GitHub SSH key (the formula clones over SSH).
 
 ```sh
 brew install 0xnicholasy/tap/claudeterm
@@ -57,11 +83,25 @@ brew services start claudeterm   # optional: ccgovd daemon, read-only
 
 For the daemon to demote and hibernate idle sessions, run `ccgovd run --govern`.
 
+## Updates
+
+ClaudeTerm checks for a new release at launch and once a day (turn it off in **ClaudeTerm > About ClaudeTerm**). When one is out, the About window installs it with Homebrew and relaunches; panes come back with `claude --resume`. By hand:
+
+```sh
+brew upgrade 0xnicholasy/tap/claudeterm
+```
+
+Builds are signed with your Apple Development certificate when the keychain has one, so macOS keeps ClaudeTerm's folder permissions across updates. Without one the app is signed ad hoc, and macOS asks for Desktop and Documents access again after each update.
+
 ## Build from source
 
 ```sh
-scripts/build-app.sh           # builds build/ClaudeTerm.app
+scripts/build-app.sh           # builds and signs build/ClaudeTerm.app
 cd ccgovd && make install-daemon
 ```
 
-Hook setup: [`ccgovd/hooks/README.md`](ccgovd/hooks/README.md). Design notes: [`docs/design.md`](docs/design.md).
+Set `CLAUDETERM_SIGN_IDENTITY` to choose a signing certificate. Hook setup: [`ccgovd/hooks/README.md`](ccgovd/hooks/README.md). Design notes: [`docs/design.md`](docs/design.md).
+
+## Author
+
+[0xnicholasy](https://github.com/0xnicholasy)
