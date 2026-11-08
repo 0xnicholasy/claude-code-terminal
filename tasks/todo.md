@@ -74,3 +74,14 @@ Ownership decisions:
 ## Open questions
 - Hibernate default: 30 min idle. Change after a week of use.
 - Repo is not a git repo yet; `git init` on first code milestone.
+
+## Claude-native sidebar + usage stats (2026-11-08)
+
+Finish line: tests pass, app builds, and live: sidebar groups by project, Cmd-numbers run top to bottom, a waiting session is highlighted and notifies, Usage tab shows daily/weekly/monthly/projects/blocks plus the weekly outlook line.
+
+- [x] Project-first sidebar (decided 2026-11-08): open projects first in pane order, then other projects by name; nothing reorders on state change
+- [x] Panes kept grouped by project, so Cmd-1..9 match sidebar order top to bottom
+- [x] Waiting state: highlighted row, bell, status-strip label, macOS notification on transition, dock badge
+- [x] Usage: week/month totals, weekly/monthly/projects (ccusage session)/blocks (ccusage blocks) lists
+- [x] Weekly outlook: reserve, lasts-until-reset or run-out time, 5-hour windows left, est. 5-hour quotas left
+- [ ] Live check in the app (screen capture was not permitted from the session, 2026-11-08)

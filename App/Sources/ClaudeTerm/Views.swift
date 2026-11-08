@@ -30,11 +30,13 @@ struct ContentView: View {
                     if let session = model.selectedSession { PaneStatusStrip(session: session, model: model) }
                 }
                 if model.tab == .usage {
-                    UsageView(usage: usage).background(Color(nsColor: .windowBackgroundColor))
+                    UsageView(usage: usage, knownPaths: model.rows.map(\.cwd)).background(Palette.main)
                 }
             }
+            .background(Palette.main)
             .overlay(alignment: .bottom) { NoticeBanner(model: model) }
         }
+        .toolbarBackground(Palette.main, for: .windowToolbar)
         .navigationTitle("")
         .onChange(of: model.selectedID) { _, _ in model.tab = .sessions }
         .task { if !Bootstrap.isUnderTest { usage.start() } }
@@ -46,24 +48,22 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Picker("View", selection: $model.tab) {
-                    ForEach(DetailTab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .help([Shortcuts.hint("Sessions", Shortcuts.sessionsTab), Shortcuts.hint("Usage", Shortcuts.usageTab),
-                       Shortcuts.hint("Switch", Shortcuts.toggleTab)].joined(separator: "\n"))
+                TabSwitcher(tab: $model.tab)
+                    .help([Shortcuts.hint("Sessions", Shortcuts.sessionsTab), Shortcuts.hint("Usage", Shortcuts.usageTab),
+                           Shortcuts.hint("Switch", Shortcuts.toggleTab)].joined(separator: "\n"))
             }
+            .plainBackground()
             ToolbarItem(placement: .principal) {
                 // fixedSize: the toolbar must never truncate these to "US..." or pad them apart.
                 HStack(spacing: 18) {
                     MemorySummaryView(summary: model.summary, daemonConnected: model.daemonConnected)
                     if let status = git.status { GitChip(status: status) }
-                    QuotaChip(quota: usage.quota, costs: usage.costs)
+                    QuotaChip(quota: usage.quota, costs: usage.costs, outlook: usage.outlook)
                 }
                 .fixedSize()
                 .padding(.horizontal, 10)
             }
+            .plainBackground()
             ToolbarItem {
                 ClipboardButton(clipboard: clipboard)
             }
@@ -89,6 +89,39 @@ struct ContentView: View {
 }
 
 // MARK: Toolbar
+
+extension ToolbarContent {
+    /// Drops the glass capsule macOS 26 draws behind toolbar items, for the flat Claude app look.
+    @ToolbarContentBuilder func plainBackground() -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
+    }
+}
+
+/// Sessions / Usage switch drawn as two flat text tabs instead of a segmented control.
+struct TabSwitcher: View {
+    @Binding var tab: DetailTab
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(DetailTab.allCases) { t in
+                Button { tab = t } label: {
+                    Text(t.rawValue)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(tab == t ? Palette.text : Palette.textTertiary)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(tab == t ? Palette.rowSelected : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
 
 struct MemorySummaryView: View {
     let summary: MemorySummary
@@ -118,11 +151,41 @@ struct MemorySummaryView: View {
     }
 }
 
+/// Colours taken from the Claude desktop app: warm charcoal in dark mode, warm off-white in light
+/// mode, and Claude's clay orange as the one accent.
 enum Palette {
-    static let accent = Color(red: 0xF5 / 255, green: 0xA5 / 255, blue: 0x24 / 255)
+    static let accent = Color(hex: 0xD97757)
+    /// Window content behind the panes and the Usage tab.
+    static let main = dynamic(light: 0xFAF9F5, dark: 0x262624)
+    /// Sidebar column, one step darker than `main` in dark mode, as in the Claude app.
+    static let sidebar = dynamic(light: 0xF3F1EA, dark: 0x1F1E1D)
+    static let text = dynamic(light: 0x141413, dark: 0xF0EEE6)
+    static let textSecondary = dynamic(light: 0x5E5D59, dark: 0xB7B5A9)
+    static let textTertiary = dynamic(light: 0x8F8D86, dark: 0x85837B)
+    /// Sidebar row fills: hover, and the selected row.
+    static let rowHover = Color.primary.opacity(0.045)
+    static let rowSelected = dynamic(light: 0xE8E5DA, dark: 0x30302E)
     /// Raised surfaces (cards, list containers) and their outline, tuned for both appearances.
     static let surface = Color.primary.opacity(0.045)
     static let hairline = Color.primary.opacity(0.08)
+
+    static func dynamic(light: UInt32, dark: UInt32) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(hex: isDark ? dark : light)
+        })
+    }
+}
+
+extension NSColor {
+    convenience init(hex: UInt32) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+
+extension Color {
+    init(hex: UInt32) { self.init(nsColor: NSColor(hex: hex)) }
 }
 
 /// Rounded container used by the empty state and the Usage tab.
@@ -143,109 +206,188 @@ struct Card<Content: View>: View {
 
 struct SidebarView: View {
     @ObservedObject var model: WorkspaceModel
-    /// Project groups the user folded. Groups start expanded so every session in a project is visible.
-    @State private var collapsed: Set<String> = []
+    /// Projects the user folded or unfolded, by project id. Without an entry, a project is expanded
+    /// when it has a pane open or a session waiting, and folded otherwise, so the list stays short.
+    @AppStorage("sidebar.projectExpansion") private var expansionJSON = "{}"
 
     var body: some View {
         let rows = model.rows
-        let sections = SidebarLayout.sections(rows)
-        let maxBytes = rows.filter { $0.state != .hibernated }.map(\.rssBytes).max() ?? 0
-        List(selection: Binding<String?>(
-            get: { model.selectedID },
-            set: { id in
-                if let id, let session = rows.first(where: { $0.sessionId == id }) { model.open(session) }
+        let layout = SidebarLayout.projects(rows, paneOrder: model.panes.map(\.id))
+        // A plain scroll stack instead of a sidebar List: List draws the system selection pill and
+        // vibrancy, which cannot be restyled to the Claude app's flat, warm sidebar.
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1) {
+                if !layout.open.isEmpty { section("Open here", layout.open) }
+                if !layout.other.isEmpty { section("Projects", layout.other) }
             }
-        )) {
-            ForEach(sections) { section in
-                Section {
-                    ForEach(section.entries) { entry in
-                        switch entry {
-                        case let .session(s):
-                            SessionRow(session: s, maxBytes: maxBytes, model: model).tag(s.sessionId)
-                        case let .project(path, name, sessions):
-                            DisclosureGroup(isExpanded: Binding(
-                                get: { !collapsed.contains(entry.id) },
-                                set: { open in
-                                    if open { collapsed.remove(entry.id) } else { collapsed.insert(entry.id) }
-                                }
-                            )) {
-                                ForEach(sessions) { s in
-                                    SessionRow(session: s, maxBytes: maxBytes, model: model, showProject: false)
-                                        .tag(s.sessionId)
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "folder").foregroundStyle(.secondary).imageScale(.small)
-                                    Text(name).fontWeight(.medium).lineLimit(1)
-                                    Spacer()
-                                    Text("\(sessions.count)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
-                                }
-                                .help(path + "\nRight-click for a new session here")
-                                .contextMenu {
-                                    Button("New Session in This Project") { model.newSession(cwd: path) }
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    Text(section.kind.rawValue)
-                        .help(Shortcuts.hint("Move through sessions", Shortcuts.nextSession + " / " + Shortcuts.previousSession))
+            .padding(.horizontal, 8)
+            .padding(.bottom, 12)
+        }
+        .scrollIndicators(.never)
+        .background(Palette.sidebar)
+        .overlay {
+            if rows.isEmpty {
+                Text("No sessions").foregroundStyle(Palette.textTertiary)
+            }
+        }
+    }
+
+    @ViewBuilder private func section(_ title: String, _ projects: [SidebarProject]) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Palette.textTertiary)
+            .padding(.horizontal, 8)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+        ForEach(projects) { group($0) }
+    }
+
+    @ViewBuilder private func group(_ project: SidebarProject) -> some View {
+        let expanded = expansion(project)
+        ProjectHeader(project: project, model: model, isExpanded: expanded.wrappedValue) {
+            withAnimation(.easeOut(duration: 0.15)) { expanded.wrappedValue.toggle() }
+        }
+        if expanded.wrappedValue {
+            ForEach(project.sessions) { s in
+                SessionRow(session: s, model: model, isSelected: s.sessionId == model.selectedID) {
+                    model.open(s)
                 }
             }
         }
-        .listStyle(.sidebar)
-        .overlay {
-            if rows.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "terminal").font(.title2).foregroundStyle(.tertiary)
-                    Text("No sessions").foregroundStyle(.secondary)
+    }
+
+    private func expansion(_ project: SidebarProject) -> Binding<Bool> {
+        Binding(
+            get: { overrides[project.id] ?? (project.isOpen || project.waiting > 0) },
+            set: { open in
+                var o = overrides
+                o[project.id] = open
+                if let data = try? JSONEncoder().encode(o) { expansionJSON = String(decoding: data, as: UTF8.self) }
+            }
+        )
+    }
+
+    private var overrides: [String: Bool] {
+        (try? JSONDecoder().decode([String: Bool].self, from: Data(expansionJSON.utf8))) ?? [:]
+    }
+}
+
+struct ProjectHeader: View {
+    let project: SidebarProject
+    @ObservedObject var model: WorkspaceModel
+    let isExpanded: Bool
+    let toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Palette.textTertiary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: 12)
+                Text(project.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(project.isOpen ? Palette.text : Palette.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if project.waiting > 0 {
+                    Text("\(project.waiting)")
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Capsule().fill(Palette.accent))
+                        .help("\(project.waiting) waiting for you")
+                } else if hovering {
+                    Text("\(project.sessions.count)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(Palette.textTertiary)
                 }
             }
+            .padding(.horizontal, 6)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 7).fill(hovering ? Palette.rowHover : .clear))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .padding(.top, 2)
+        .help(Formatting.shortPath(project.path) + "\nRight-click for a new session here")
+        .contextMenu {
+            Button("New Session in This Project") { model.newSession(cwd: project.path) }
+                .disabled(project.path.isEmpty)
+            Button("Reveal Folder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
+            }
+            .disabled(project.path.isEmpty)
         }
     }
 }
 
 struct SessionRow: View {
     let session: SessionInfo
-    let maxBytes: UInt64
     @ObservedObject var model: WorkspaceModel
-    var showProject = true
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         let shortcut = model.paneShortcut(session.sessionId)
-        HStack(spacing: 9) {
-            StateDot(state: session.state, demoted: session.demoted)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(SessionGrouping.displayName(session))
-                        .lineLimit(1)
-                        .foregroundStyle(isDim ? .secondary : .primary)
-                    if session.pinned {
-                        Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(.secondary)
+        Button(action: action) {
+            HStack(spacing: 8) {
+                StateDot(state: session.state, demoted: session.demoted)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(SessionGrouping.displayName(session))
+                            .font(.system(size: 13))
+                            .foregroundStyle(nameColor)
+                            .lineLimit(1)
+                        if session.pinned {
+                            Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(Palette.textTertiary)
+                        }
+                    }
+                    if isWaiting {
+                        Text("Waiting for you").font(.system(size: 11)).foregroundStyle(Palette.accent)
                     }
                 }
-                if showProject, let project = SidebarLayout.secondaryText(session) {
-                    Text(project).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-                }
+                Spacer(minLength: 4)
+                // Details stay out of the way until the row is hovered or selected.
+                if hovering || isSelected { trailing }
+                Text(shortcut ?? "")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Palette.textTertiary)
+                    .frame(width: 24, alignment: .trailing)
             }
-            Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 2) {
-                trailing
-                if let shortcut {
-                    Text(shortcut).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary).fixedSize()
-                }
-            }
+            .padding(.leading, 20)
+            .padding(.trailing, 6)
+            .padding(.vertical, isWaiting ? 5 : 0)
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 7).fill(rowFill))
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .help(helpText(shortcut))
         .contextMenu { RowMenu(session: session, model: model) }
     }
 
+    private var isWaiting: Bool { session.state == .blocked }
     private var isDim: Bool { session.state == .hibernated || session.demoted }
+    private var nameColor: Color {
+        if isSelected || isWaiting { return Palette.text }
+        return isDim ? Palette.textTertiary : Palette.textSecondary
+    }
+    private var rowFill: Color {
+        if isSelected { return Palette.rowSelected }
+        return hovering ? Palette.rowHover : .clear
+    }
 
     private func helpText(_ shortcut: String?) -> String {
-        var lines = [session.cwd, "State: \(stateText)"]
+        var lines = [Formatting.shortPath(session.cwd), "State: \(stateText)"]
         if session.rssBytes > 0, session.state != .hibernated { lines.append("Memory: \(Formatting.bytes(session.rssBytes))") }
+        if !session.ownedByApp, session.kind == .interactive { lines.append("Running in another terminal") }
         if let shortcut { lines.append(Shortcuts.hint("Show pane", shortcut)) }
         lines.append("Right-click for more actions")
         return lines.joined(separator: "\n")
@@ -265,13 +407,13 @@ struct SessionRow: View {
         if session.state == .hibernated {
             Text(Formatting.elapsed(sinceMs: session.hibernatedAtMs ?? session.lastActivityMs,
                                     nowMs: Int64(Date().timeIntervalSince1970 * 1000)) ?? "")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(Palette.textTertiary)
+                .fixedSize()
         } else if session.rssBytes > 0 {
-            // Text only: a bar beside it cost the name its width. Relative size shows as text weight.
             Text(Formatting.bytes(session.rssBytes))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(SidebarLayout.memoryFraction(session, maxBytes: maxBytes) > 0.75 ? .secondary : .tertiary)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(Palette.textTertiary)
                 .fixedSize()
         }
     }
@@ -286,17 +428,19 @@ struct StateDot: View {
             switch state {
             case .running:
                 Circle().fill(Palette.accent).symbolEffect(.pulse)
+                    .frame(width: 6, height: 6)
             case .blocked:
-                Circle().fill(Palette.accent)
-                    .overlay(Circle().strokeBorder(Palette.accent.opacity(0.35), lineWidth: 2).scaleEffect(1.8))
+                Image(systemName: "bell.fill").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Palette.accent)
+                    .symbolEffect(.pulse)
             case .hibernated:
-                Image(systemName: "moon.fill").font(.system(size: 8)).foregroundStyle(.tertiary)
+                Image(systemName: "moon.fill").font(.system(size: 8)).foregroundStyle(Palette.textTertiary)
             case .idle, .unknown:
-                Circle().strokeBorder(demoted ? Color.secondary.opacity(0.4) : Color.secondary, lineWidth: 1.2)
+                Circle().strokeBorder(Palette.textTertiary.opacity(demoted ? 0.5 : 1), lineWidth: 1)
+                    .frame(width: 6, height: 6)
             }
         }
-        .frame(width: 7, height: 7)
-        .frame(width: 12)
+        .frame(width: 12, height: 12)
     }
 }
 
@@ -463,6 +607,11 @@ struct PaneStatusStrip: View {
             .truncationMode(.middle)
             .help("Reveal in Finder")
             Spacer(minLength: 8)
+            if session.state == .blocked {
+                Label("Waiting for your answer", systemImage: "bell.fill")
+                    .foregroundStyle(Palette.accent)
+                    .fontWeight(.semibold)
+            }
             if session.demoted {
                 Text("background priority").foregroundStyle(.tertiary).help("ccgovd lowered this session's CPU priority")
             }
@@ -476,7 +625,8 @@ struct PaneStatusStrip: View {
         .lineLimit(1)
         .padding(.horizontal, 10)
         .frame(height: 26)
-        .background(.bar)
+        .background(session.state == .blocked ? Palette.accent.opacity(0.12) : .clear)
+        .background(Palette.main)
         .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
     }
 

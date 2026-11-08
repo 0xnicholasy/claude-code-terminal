@@ -1,98 +1,85 @@
 import CCProtocol
 import Foundation
 
-/// Sidebar sections, ordered by what the user can do with a session (docs/design.md).
-enum SidebarSectionKind: String, CaseIterable, Identifiable {
-    case needsYou = "Needs you"
-    case openHere = "Open here"
-    case elsewhere = "Elsewhere"
-    case asleep = "Asleep"
+/// One project folder in the sidebar, holding every session that runs or ran in it.
+struct SidebarProject: Identifiable, Equatable {
+    var path: String
+    var name: String
+    var sessions: [SessionInfo]
+    /// True when at least one of its sessions has a pane in this window.
+    var isOpen: Bool
 
-    var id: String { rawValue }
-
-    static func of(_ s: SessionInfo) -> SidebarSectionKind {
-        if s.state == .blocked { return .needsYou }
-        if s.ownedByApp { return .openHere }
-        if s.state == .hibernated || s.kind == .hibernated { return .asleep }
-        return .elsewhere
-    }
+    var id: String { "project:" + path }
+    var waiting: Int { sessions.filter { $0.state == .blocked }.count }
+    var liveBytes: UInt64 { sessions.filter { $0.state != .hibernated }.reduce(0) { $0 + $1.rssBytes } }
 }
 
-/// One sidebar line: a single session, or several sessions of the same project collapsed into one row.
-enum SidebarEntry: Identifiable, Equatable {
-    case session(SessionInfo)
-    case project(path: String, name: String, sessions: [SessionInfo])
+struct SidebarProjects: Equatable {
+    /// Projects with a pane open, in pane order: the order Cmd-1 to Cmd-9 follow.
+    var open: [SidebarProject]
+    /// Every other project, by name.
+    var other: [SidebarProject]
 
-    var id: String {
-        switch self {
-        case let .session(s): s.sessionId
-        case let .project(path, _, _): "project:" + path
-        }
-    }
-}
-
-struct SidebarSection: Identifiable, Equatable {
-    var kind: SidebarSectionKind
-    var entries: [SidebarEntry]
-    var id: String { kind.id }
+    var all: [SidebarProject] { open + other }
 }
 
 enum SidebarLayout {
-    /// Sections in fixed order, empty ones dropped. Within a section, sessions sharing a project folder
-    /// collapse into one project entry; entries sort by name.
-    static func sections(_ rows: [SessionInfo]) -> [SidebarSection] {
-        let bySection = Dictionary(grouping: rows, by: SidebarSectionKind.of)
-        return SidebarSectionKind.allCases.compactMap { kind in
-            guard let list = bySection[kind], !list.isEmpty else { return nil }
-            let byPath = Dictionary(grouping: list, by: \.cwd)
-            var entries: [SidebarEntry] = byPath.map { path, sessions in
-                if sessions.count == 1 { return .session(sessions[0]) }
-                return .project(path: path, name: projectName(path), sessions: sortByName(sessions))
-            }
-            entries.sort { sortKey($0).localizedCaseInsensitiveCompare(sortKey($1)) == .orderedAscending }
-            return SidebarSection(kind: kind, entries: entries)
+    /// Project-first sidebar. Projects with an open pane come first, ordered by their first pane;
+    /// the rest follow by name. Inside a project, sessions with a pane come first in pane order,
+    /// then the others by name. State is never a sort key, so a row moves only when a pane opens
+    /// or closes, and the Cmd-number badges read 1, 2, 3 from top to bottom.
+    static func projects(_ rows: [SessionInfo], paneOrder: [String]) -> SidebarProjects {
+        let rank = Dictionary(paneOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
+        let built = Dictionary(grouping: rows, by: \.cwd).map { path, list in
+            SidebarProject(path: path, name: projectName(path),
+                           sessions: list.sorted { before($0, $1, rank: rank) },
+                           isOpen: list.contains { rank[$0.sessionId] != nil })
         }
-    }
-
-    /// Project shown next to the name only when it adds information.
-    /// Every session in the order the sidebar shows it, project children in place.
-    static func order(_ rows: [SessionInfo]) -> [SessionInfo] {
-        sections(rows).flatMap { section in
-            section.entries.flatMap { entry -> [SessionInfo] in
-                switch entry {
-                case let .session(s): [s]
-                case let .project(_, _, sessions): sessions
-                }
-            }
+        func firstPane(_ p: SidebarProject) -> Int { p.sessions.compactMap { rank[$0.sessionId] }.min() ?? Int.max }
+        let open = built.filter(\.isOpen).sorted { firstPane($0) < firstPane($1) }
+        let other = built.filter { !$0.isOpen }.sorted {
+            let c = $0.name.localizedCaseInsensitiveCompare($1.name)
+            return c == .orderedSame ? $0.path < $1.path : c == .orderedAscending
         }
+        return SidebarProjects(open: open, other: other)
     }
 
-    static func secondaryText(_ s: SessionInfo) -> String? {
-        let project = projectName(s.cwd)
-        let name = SessionGrouping.displayName(s)
-        guard !s.cwd.isEmpty, !name.lowercased().hasPrefix(project.lowercased()) else { return nil }
-        return project
+    /// Every session in the order the sidebar shows it.
+    static func order(_ rows: [SessionInfo], paneOrder: [String]) -> [SessionInfo] {
+        projects(rows, paneOrder: paneOrder).all.flatMap(\.sessions)
     }
 
-    /// Bar length for a row, relative to the largest live session (0...1).
-    static func memoryFraction(_ s: SessionInfo, maxBytes: UInt64) -> Double {
-        guard maxBytes > 0, s.state != .hibernated else { return 0 }
-        return min(1, Double(s.rssBytes) / Double(maxBytes))
+    private static func before(_ a: SessionInfo, _ b: SessionInfo, rank: [String: Int]) -> Bool {
+        switch (rank[a.sessionId], rank[b.sessionId]) {
+        case let (x?, y?): return x < y
+        case (.some, nil): return true
+        case (nil, .some): return false
+        case (nil, nil):
+            let c = SessionGrouping.displayName(a).localizedCaseInsensitiveCompare(SessionGrouping.displayName(b))
+            return c == .orderedSame ? a.sessionId < b.sessionId : c == .orderedAscending
+        }
     }
 
     static func projectName(_ path: String) -> String {
         path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
     }
+}
 
-    private static func sortByName(_ list: [SessionInfo]) -> [SessionInfo] {
-        list.sorted { SessionGrouping.displayName($0).localizedCaseInsensitiveCompare(SessionGrouping.displayName($1)) == .orderedAscending }
+/// Keeps a project's panes next to each other, so pane order (Cmd-1 to Cmd-9) matches the sidebar.
+enum PaneOrder {
+    /// Where a new pane in `cwd` goes: right after the last pane of the same project, else at the end.
+    static func insertionIndex(cwds: [String], cwd: String) -> Int {
+        cwds.lastIndex(of: cwd).map { $0 + 1 } ?? cwds.count
     }
 
-    private static func sortKey(_ e: SidebarEntry) -> String {
-        switch e {
-        case let .session(s): SessionGrouping.displayName(s)
-        case let .project(_, name, _): name
-        }
+    /// Stable regroup for layouts saved before panes were kept together: each project's panes move
+    /// up to its first pane; relative order is otherwise kept.
+    static func grouped<T>(_ items: [T], key: (T) -> String) -> [T] {
+        var firstSeen: [String: Int] = [:]
+        for (i, item) in items.enumerated() where firstSeen[key(item)] == nil { firstSeen[key(item)] = i }
+        return items.enumerated()
+            .sorted { (firstSeen[key($0.element)] ?? 0, $0.offset) < (firstSeen[key($1.element)] ?? 0, $1.offset) }
+            .map(\.element)
     }
 }
 
@@ -183,6 +170,31 @@ enum Formatting {
         f.dateFormat = "yyyy-MM-dd"
         guard let d = f.date(from: key) else { return key }
         return d.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    /// "2026-11" -> "November 2026".
+    static func monthTitle(_ key: String) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM"
+        guard let d = f.date(from: key) else { return key }
+        return d.formatted(.dateTime.month(.wide).year())
+    }
+
+    /// "Sat 7 Nov, 10:00 to 15:00".
+    static func blockTitle(_ start: Date, _ end: Date) -> String {
+        start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + ", "
+            + start.formatted(date: .omitted, time: .shortened) + " to " + end.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// Active block: burn rate, projected cost and minutes left. Past block: tokens.
+    static func blockDetail(_ b: UsageBlock) -> String {
+        var parts = [tokens(b.tokens) + " tokens"]
+        if b.isActive {
+            if let r = b.costPerHour { parts.append(dollars(r) + "/h") }
+            if let p = b.projectedCost { parts.append("on pace for " + dollars(p)) }
+            if let m = b.remainingMinutes { parts.append("\(m / 60)h \(m % 60)m left") }
+        }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {

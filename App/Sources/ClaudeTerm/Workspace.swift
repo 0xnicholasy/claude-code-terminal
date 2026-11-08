@@ -47,11 +47,31 @@ final class Pane: ObservableObject, Identifiable {
                               "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down",
                               "super+shift+v", "super+shift+m"]
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
-    /// The library's default theme, with an amber selection instead of its grey one. Theme commands are
-    /// applied after the builder's, so selection colours set in the builder would be overwritten.
+    /// Warm palette matching the window chrome (`Palette.main`), after the Claude desktop app. Theme
+    /// commands are applied after the builder's, so colours set in the builder would be overwritten.
     static let theme = TerminalTheme(
-        light: TerminalConfiguration.alabaster.selectionBackground("F5D9A8").selectionForeground("2B1D05"),
-        dark: TerminalConfiguration.afterglow.selectionBackground("6B4A12").selectionForeground("FFF4E0")
+        light: TerminalConfiguration { b in
+            b.withBackground("FAF9F5")
+            b.withForeground("262624")
+            b.withCursorColor("C6613F")
+            b.withSelectionBackground("F2D5C8")
+            b.withSelectionForeground("262624")
+            for (i, c) in ["262624", "B6412F", "4E7A3A", "94650F", "2F6596", "8E4A7A", "2F7F78", "B8B5AA",
+                           "87867F", "C6513A", "5C8C46", "A87512", "3B76AB", "A2588C", "36918A", "D9D6CC"].enumerated() {
+                b.withPalette(i, color: "#" + c)
+            }
+        },
+        dark: TerminalConfiguration { b in
+            b.withBackground("262624")
+            b.withForeground("E8E6DC")
+            b.withCursorColor("D97757")
+            b.withSelectionBackground("5A3E33")
+            b.withSelectionForeground("FAF9F5")
+            for (i, c) in ["1F1E1D", "E06C5A", "8DB57A", "E3B26B", "7AA2C8", "C88BB0", "7CC2B8", "E8E6DC",
+                           "6B6A65", "EE8572", "A3C891", "EDC285", "94B6D8", "D9A2C4", "96D2C9", "FAF9F5"].enumerated() {
+                b.withPalette(i, color: "#" + c)
+            }
+        }
     )
     static let sharedController = TerminalController(theme: theme) { config in
         for key in unboundKeys { config.withCustom("keybind", "\(key)=unbind") }
@@ -91,6 +111,7 @@ final class WorkspaceModel: ObservableObject {
     @Published var tab: DetailTab = .sessions
     /// Panes whose claude is being stopped by Close Pane.
     @Published private(set) var closing: Set<String> = []
+    private var waiting = WaitingTracker()
 
     var windowFrame: LayoutFrame? {
         didSet { if windowFrame != oldValue { persist() } }
@@ -108,6 +129,9 @@ final class WorkspaceModel: ObservableObject {
     private let confirm: (SessionInfo) -> Bool
     /// The pid of the claude a pane started (`PaneProcess.claudePid` in the app, nil in tests).
     private let paneProcess: (String) -> Int32?
+    /// Sessions that just started or stopped waiting, plus how many interactive sessions wait now
+    /// (`AttentionNotifier` in the app: notification banner and Dock badge; no-op in tests).
+    private let attention: (WaitingChange, Int) -> Void
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
@@ -115,8 +139,10 @@ final class WorkspaceModel: ObservableObject {
          request: @escaping (Command, String) async -> Response? = { _, _ in nil },
          processes: ProcessControl = SystemProcessControl(),
          confirm: @escaping (SessionInfo) -> Bool = { _ in false },
-         paneProcess: @escaping (String) -> Int32? = { _ in nil }) {
+         paneProcess: @escaping (String) -> Int32? = { _ in nil },
+         attention: @escaping (WaitingChange, Int) -> Void = { _, _ in }) {
         self.paneProcess = paneProcess
+        self.attention = attention
         self.store = store
         self.claudePath = claudePath
         self.notify = notify
@@ -129,10 +155,12 @@ final class WorkspaceModel: ObservableObject {
 
     /// Source sessions, plus in-app panes the index does not know about as hibernated rows.
     var rows: [SessionInfo] {
-        let inApp = Set(panes.map(\.id))
+        let paneCwd = Dictionary(panes.map { ($0.id, $0.cwd) }, uniquingKeysWith: { a, _ in a })
         var out = sessions.map { s -> SessionInfo in
             var s = s
-            s.ownedByApp = inApp.contains(s.sessionId)
+            s.ownedByApp = paneCwd[s.sessionId] != nil
+            // The pane's folder wins, so the row sits in the same project group as its pane.
+            if let cwd = paneCwd[s.sessionId] { s.cwd = cwd }
             return s
         }
         let indexed = Set(sessions.map(\.sessionId))
@@ -150,6 +178,11 @@ final class WorkspaceModel: ObservableObject {
     func apply(sessions list: [SessionInfo]) {
         freed.update(list)
         sessions = list
+        let current = rows
+        var change = waiting.update(current)
+        // Background agents can sit waiting for days; like the badge, banners cover interactive sessions only.
+        change.started.removeAll { $0.kind == .background }
+        attention(change, current.filter { $0.state == .blocked && $0.kind != .background }.count)
     }
 
     var summary: MemorySummary { MemorySummary(rows: rows, freedBytes: freed.freedBytes) }
@@ -215,7 +248,7 @@ final class WorkspaceModel: ObservableObject {
         }
         let id = UUID().uuidString.lowercased()
         let pane = makePane(sessionId: id, cwd: cwd, title: (cwd as NSString).lastPathComponent, origin: .new)
-        panes.append(pane)
+        insert(pane)
         select(pane.id)
     }
 
@@ -264,8 +297,13 @@ final class WorkspaceModel: ObservableObject {
     private func openResumePane(_ session: SessionInfo) {
         let title = session.name ?? (session.cwd as NSString).lastPathComponent
         let pane = makePane(sessionId: session.sessionId, cwd: session.cwd, title: title, origin: .resume)
-        panes.append(pane)
+        insert(pane)
         select(pane.id)
+    }
+
+    /// Next to the project's other panes, so Cmd-numbers keep following the sidebar top to bottom.
+    private func insert(_ pane: Pane) {
+        panes.insert(pane, at: PaneOrder.insertionIndex(cwds: panes.map(\.cwd), cwd: pane.cwd))
     }
 
     func select(_ id: String?) {
@@ -303,7 +341,7 @@ final class WorkspaceModel: ObservableObject {
     /// Next or previous row in sidebar order (all sessions, not only open panes), wrapping around.
     /// Opening a row follows the click rules, so a session live elsewhere shows its notice.
     func cycleSession(by step: Int) {
-        let order = SidebarLayout.order(rows)
+        let order = SidebarLayout.order(rows, paneOrder: panes.map(\.id))
         guard !order.isEmpty else { return }
         let cur = order.firstIndex { $0.sessionId == selectedID } ?? (step > 0 ? -1 : 0)
         let next = ((cur + step) % order.count + order.count) % order.count
@@ -358,10 +396,10 @@ final class WorkspaceModel: ObservableObject {
             notice = "Saved layout was unreadable; it was moved to layout.json.bad and the app started empty."
         case let .loaded(layout):
             guard let window = layout.windows.first else { return }
-            panes = window.panes.compactMap { rec in
+            panes = PaneOrder.grouped(window.panes.compactMap { rec in
                 guard SessionID.isValid(rec.sessionId) else { return nil }
                 return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title, origin: .resume)
-            }
+            }, key: \.cwd)
             windowFrameForRestore = window.frame
             windowFrame = window.frame // set before select() persists, so the saved frame is not overwritten with nil
             if let sel = window.selected, panes.contains(where: { $0.id == sel }) {

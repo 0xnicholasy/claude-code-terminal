@@ -285,7 +285,7 @@ struct ConversationView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(Palette.main)
         // Reply text is model output, so a link in it is untrusted: open only web links.
         .environment(\.openURL, OpenURLAction { url in
             ConversationView.isSafeLink(url) ? .systemAction : .discarded

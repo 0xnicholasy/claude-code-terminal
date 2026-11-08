@@ -79,6 +79,70 @@ struct UsageTests {
         #expect(recent[2].cost == 0) // 2026-11-02 has no usage
     }
 
+    @Test func weekAndMonthTotalsFollowTheCalendar() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        cal.firstWeekday = 2 // Monday
+        // Sunday 8 Nov 2026: the week started Monday 2 Nov.
+        let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 8, hour: 12))!
+        let h = CostHistory(days: ["2026-11-01": 50, "2026-11-02": 10, "2026-11-08": 5, "2026-10-15": 7, "2026-09-30": 1])
+        #expect(h.weekTotal(now: now, calendar: cal) == 15)
+        let weeks = h.weekly(2, now: now, calendar: cal)
+        #expect(weeks.map(\.key) == ["2026-10-26", "2026-11-02"] && weeks.map(\.cost) == [50, 15])
+        let months = h.monthly(3, now: now, calendar: cal)
+        #expect(months.map(\.key) == ["2026-09", "2026-10", "2026-11"] && months.map(\.cost) == [1, 7, 65])
+        #expect(months[2].tokens == nil) // no day in it has token detail
+    }
+
+    @Test func weeklyOutlookMatchesThePlanningLine() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let week = 7 * 24 * 60
+        // 3 of 7 days gone (even pace 42.9%) at 30% used, reset in 4 days = 96 h = 19 whole 5-hour windows.
+        let w = QuotaWindow(usedPercent: 30, windowMinutes: week, resetsAt: now.addingTimeInterval(4 * 86400))
+        let o = QuotaOutlook.make(weekly: w, weeklyPerSession: 30, now: now)
+        #expect(Int((o.reservePercent ?? 0).rounded()) == 13)
+        #expect(o.lastsUntilReset == true && o.runsOutAt == nil)
+        #expect(o.windowsLeft == 19)
+        #expect(abs((o.sessionQuotasLeft ?? 0) - 70.0 / 30) < 0.001)
+        #expect(o.summary() == "13% in reserve \u{00B7} Lasts until reset \u{00B7} Est. 2.3 session quotas left \u{00B7} 19 windows until reset")
+        // Ahead of pace: 60% used after 3 days runs out after 5 days, one day before reset.
+        let hot = QuotaOutlook.make(weekly: QuotaWindow(usedPercent: 60, windowMinutes: week,
+                                                        resetsAt: now.addingTimeInterval(4 * 86400)),
+                                    weeklyPerSession: nil, now: now)
+        #expect(hot.lastsUntilReset == false)
+        #expect(abs((hot.runsOutAt?.timeIntervalSince(now) ?? 0) - 2 * 86400) < 1)
+        #expect(hot.sessionQuotasLeft == nil)
+    }
+
+    @Test func ratioLearnsOnlyInsideTheSameWindows() {
+        let r5 = Date(timeIntervalSince1970: 5000), rw = Date(timeIntervalSince1970: 900_000)
+        func snap(_ five: Double, _ weekly: Double, fiveReset: Date) -> QuotaSnapshot {
+            QuotaSnapshot(fiveHour: QuotaWindow(usedPercent: five, windowMinutes: 300, resetsAt: fiveReset),
+                          weekly: QuotaWindow(usedPercent: weekly, windowMinutes: 10080, resetsAt: rw))
+        }
+        var t = QuotaRatioTracker()
+        t.record(snap(10, 20, fiveReset: r5))
+        t.record(snap(25, 23, fiveReset: r5)) // +15 five-hour, +3 weekly
+        #expect(t.weeklyPerSession == nil)     // under 20 points seen
+        t.record(snap(35, 25, fiveReset: r5)) // +10, +2
+        #expect(abs((t.weeklyPerSession ?? 0) - 20) < 0.001) // 5 weekly per 25 five-hour = 20% per full quota
+        // A new 5-hour window resets the 5-hour figure: that drop must not count.
+        t.record(snap(2, 25.5, fiveReset: r5.addingTimeInterval(18000)))
+        #expect(abs((t.weeklyPerSession ?? 0) - 20) < 0.001)
+    }
+
+    @Test func ccusageSessionAndBlocksParse() throws {
+        let sessions = #"{"sessions":[{"sessionId":"-Users-me-a","totalCost":2,"totalTokens":10,"lastActivity":"2026-11-08","modelsUsed":["claude-opus-5-5"]},{"sessionId":"-Users-me-Desktop-video-studio","totalCost":9,"totalTokens":99},{"sessionId":"-Users-me-a","totalCost":1,"totalTokens":1}],"totals":{}}"#
+        let p = try #require(CostParser.ccusageSessions(Data(sessions.utf8)))
+        #expect(p.map(\.cost) == [9, 3]) // repeated key summed into one row
+        #expect(ProjectKey.displayName(p[0].key, known: ["/Users/me/Desktop/video-studio"], home: "/Users/me") == "video-studio")
+        #expect(ProjectKey.displayName("-Users-me-Desktop-x-y", known: [], home: "/Users/me") == "Desktop-x-y")
+        #expect(ProjectKey.encode("/Users/me/my.app_1") == "-Users-me-my-app-1")
+        let blocks = #"{"blocks":[{"id":"a","startTime":"2026-11-07T01:00:00.000Z","endTime":"2026-11-07T06:00:00.000Z","isActive":false,"isGap":false,"costUSD":98.7,"totalTokens":5,"models":["claude-opus-5-5"]},{"id":"g","startTime":"2026-11-07T06:00:00.000Z","endTime":"2026-11-07T08:00:00.000Z","isGap":true},{"id":"b","startTime":"2026-11-08T01:00:00.000Z","endTime":"2026-11-08T06:00:00.000Z","isActive":true,"costUSD":12,"totalTokens":7,"models":[],"burnRate":{"costPerHour":27.7},"projection":{"totalCost":111.14,"remainingMinutes":27}}]}"#
+        let b = try #require(CostParser.ccusageBlocks(Data(blocks.utf8)))
+        #expect(b.count == 2 && b[0].isActive && b[0].remainingMinutes == 27 && b[1].cost == 98.7)
+    }
+
     @Test func costParsersReadCcusageDailyLedgerAndTodayCache() {
         let daily = #"{"daily":[{"date":"2026-11-01","totalCost":1.5,"totalTokens":9},{"date":"2026-11-02","totalCost":2}]}"#
         #expect(CostParser.ccusageDaily(Data(daily.utf8)) == ["2026-11-01": 1.5, "2026-11-02": 2])

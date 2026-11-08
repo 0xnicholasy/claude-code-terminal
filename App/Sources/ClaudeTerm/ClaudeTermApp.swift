@@ -142,7 +142,7 @@ enum Bootstrap {
     static func makeUsage() -> UsageModel {
         if isUnderTest { return UsageModel() }
         let binary = claude
-        return UsageModel(claudePath: { binary.get() })
+        return UsageModel(claudePath: { binary.get() }, defaults: .standard)
     }
 
     static func makeModel() -> WorkspaceModel {
@@ -154,7 +154,16 @@ enum Bootstrap {
                                    notify: { DaemonNotifier.send($0, sessionId: $1) },
                                    request: { await DaemonClient.request($0, sessionId: $1) },
                                    confirm: TakeoverAlert.confirm,
-                                   paneProcess: { PaneProcess.claudePid(sessionId: $0) })
+                                   paneProcess: { PaneProcess.claudePid(sessionId: $0) },
+                                   attention: { AttentionNotifier.shared.handle($0, waitingCount: $1) })
+        AttentionNotifier.shared.isShowing = { [weak model] id in
+            NSApp.isActive && model?.tab == .sessions && model?.selectedID == id
+        }
+        AttentionNotifier.shared.onOpen = { [weak model] id in
+            guard let model, let session = model.rows.first(where: { $0.sessionId == id }) else { return }
+            model.tab = .sessions
+            model.open(session)
+        }
         // Restore before any window exists: window frame callbacks persist the layout, and a
         // persist that ran first would overwrite the saved file with an empty one.
         model.restore()
@@ -163,6 +172,7 @@ enum Bootstrap {
 
     static func start(_ model: WorkspaceModel) {
         guard !isUnderTest else { return }
+        AttentionNotifier.shared.start()
         // ccgovd socket when the daemon is up; `claude agents --json` polling otherwise.
         model.consume(PreferDaemonSource.live(claude: claude) { mode in
             NSLog("ClaudeTerm session source: %@", mode == .daemon ? "ccgovd socket" : "claude agents polling")

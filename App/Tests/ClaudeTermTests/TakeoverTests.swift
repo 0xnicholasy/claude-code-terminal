@@ -102,12 +102,9 @@ struct TakeoverTests {
         m.newSession(cwd: dir.path)
         #expect(m.panes.count == 2)
         #expect(Set(m.panes.map(\.id)).count == 2)
-        let sections = SidebarLayout.sections(m.rows)
-        guard case let .project(_, _, sessions)? = sections.first?.entries.first else {
-            Issue.record("expected one project entry")
-            return
-        }
-        #expect(sessions.count == 2)
+        let layout = SidebarLayout.projects(m.rows, paneOrder: m.panes.map(\.id))
+        #expect(layout.open.count == 1)
+        #expect(layout.open.first?.sessions.count == 2)
     }
 }
 

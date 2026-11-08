@@ -41,6 +41,97 @@ struct QuotaSnapshot: Equatable {
     var updatedAt: Date?
 }
 
+/// The weekly quota read the way a person plans with it: how much is in reserve against an even
+/// pace, whether it lasts until reset, how many 5-hour windows remain, and roughly how many full
+/// 5-hour quotas the rest of the week holds.
+struct QuotaOutlook: Equatable {
+    /// Even-pace percent minus used percent: positive is in reserve, negative is ahead of pace.
+    var reservePercent: Double?
+    /// When the weekly quota runs out at the current rate; nil when it lasts until reset or the
+    /// rate is not known yet.
+    var runsOutAt: Date?
+    /// True when the current rate ends below 100% at reset; nil while the rate is not known yet.
+    var lastsUntilReset: Bool?
+    /// Whole 5-hour windows left before the weekly reset.
+    var windowsLeft: Int?
+    /// Weekly headroom divided by the weekly share one full 5-hour quota uses.
+    var sessionQuotasLeft: Double?
+
+    static func make(weekly w: QuotaWindow, weeklyPerSession: Double?, now: Date) -> QuotaOutlook {
+        var o = QuotaOutlook()
+        if let e = w.expectedPercent(now: now) { o.reservePercent = e - w.usedPercent }
+        if let reset = w.resetsAt {
+            o.windowsLeft = max(0, Int(reset.timeIntervalSince(now) / (5 * 3600)))
+            if let p = w.projectedPercent(now: now) {
+                o.lastsUntilReset = p < 100
+                let window = Double(w.windowMinutes) * 60
+                let elapsed = window - min(window, max(0, reset.timeIntervalSince(now)))
+                if p >= 100, w.usedPercent > 0, elapsed > 0 {
+                    let secondsTo100 = (100 - w.usedPercent) / (w.usedPercent / elapsed)
+                    o.runsOutAt = now.addingTimeInterval(max(0, secondsTo100))
+                }
+            }
+        }
+        if let per = weeklyPerSession, per > 0 { o.sessionQuotasLeft = max(0, 100 - w.usedPercent) / per }
+        return o
+    }
+
+    /// "9% in reserve · Lasts until reset · Est. 2.3 session quotas left · 20 windows until reset".
+    func summary(now _: Date = Date()) -> String {
+        var parts: [String] = []
+        if let r = reservePercent {
+            let n = Int(r.rounded())
+            parts.append(n >= 0 ? "\(n)% in reserve" : "\(-n)% ahead of pace")
+        }
+        if let out = runsOutAt {
+            parts.append("Runs out \(out.formatted(.dateTime.weekday(.abbreviated).hour().minute()))")
+        } else if lastsUntilReset == true {
+            parts.append("Lasts until reset")
+        }
+        if let s = sessionQuotasLeft { parts.append(String(format: "Est. %.1f session quotas left", s)) }
+        if let w = windowsLeft { parts.append("\(w) window\(w == 1 ? "" : "s") until reset") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+}
+
+/// Learns how much of the weekly quota one 5-hour quota uses, from successive snapshots taken
+/// inside the same pair of windows. Saved between launches.
+struct QuotaRatioTracker: Codable, Equatable {
+    struct Sample: Codable, Equatable {
+        var fiveHour: Double
+        var weekly: Double
+        var fiveHourReset: Date?
+        var weeklyReset: Date?
+    }
+
+    var fiveHourDelta = 0.0
+    var weeklyDelta = 0.0
+    var last: Sample?
+
+    mutating func record(_ q: QuotaSnapshot) {
+        guard let f = q.fiveHour, let w = q.weekly else { return }
+        let s = Sample(fiveHour: f.usedPercent, weekly: w.usedPercent, fiveHourReset: f.resetsAt, weeklyReset: w.resetsAt)
+        if let p = last, Self.same(p.fiveHourReset, s.fiveHourReset), Self.same(p.weeklyReset, s.weeklyReset) {
+            let d5 = s.fiveHour - p.fiveHour, dw = s.weekly - p.weekly
+            if d5 > 0, dw >= 0 {
+                fiveHourDelta += d5
+                weeklyDelta += dw
+            }
+        }
+        last = s
+    }
+
+    /// Weekly percent one full 5-hour quota uses. Nil until 20 points of 5-hour usage were seen.
+    var weeklyPerSession: Double? {
+        fiveHourDelta >= 20 ? weeklyDelta / fiveHourDelta * 100 : nil
+    }
+
+    private static func same(_ a: Date?, _ b: Date?) -> Bool {
+        guard let a, let b else { return false }
+        return abs(a.timeIntervalSince(b)) < 120
+    }
+}
+
 enum ClaudeUsageParser {
     private struct Line: Decodable {
         var type: String
@@ -202,6 +293,50 @@ struct DayUsage: Equatable {
     var models: [Model]
 }
 
+/// Cost and tokens over one week or month. `tokens` is nil when no day in it has token detail.
+struct PeriodUsage: Equatable {
+    var key: String
+    var cost: Double
+    var tokens: Int?
+}
+
+/// One project's usage from `ccusage session`, which groups by project folder.
+struct ProjectUsage: Equatable {
+    /// Claude Code's folder key: the project path with every non-alphanumeric character as "-".
+    var key: String
+    var cost: Double
+    var tokens: Int
+    var lastActivity: String
+    var models: [String]
+}
+
+/// One 5-hour billing block from `ccusage blocks`.
+struct UsageBlock: Equatable {
+    var start: Date
+    var end: Date
+    var isActive: Bool
+    var cost: Double
+    var tokens: Int
+    var models: [String]
+    var costPerHour: Double?
+    var projectedCost: Double?
+    var remainingMinutes: Int?
+}
+
+enum ProjectKey {
+    /// How Claude Code names a project's transcript folder: "/Users/me/my.app" -> "-Users-me-my-app".
+    static func encode(_ path: String) -> String {
+        String(path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+    }
+
+    /// The folder name of a known project with this key, else the key with the home prefix removed.
+    static func displayName(_ key: String, known: [String], home: String = NSHomeDirectory()) -> String {
+        if let path = known.first(where: { encode($0) == key }) { return SidebarLayout.projectName(path) }
+        let homeKey = encode(home) + "-"
+        return key.hasPrefix(homeKey) ? String(key.dropFirst(homeKey.count)) : key
+    }
+}
+
 /// Daily API-equivalent cost in USD, keyed by local date "yyyy-MM-dd".
 struct CostHistory: Equatable {
     var days: [String: Double]
@@ -237,6 +372,40 @@ struct CostHistory: Equatable {
 
     func today(now: Date, calendar: Calendar = .current) -> Double {
         days[Self.dayKey(now, calendar: calendar)] ?? 0
+    }
+
+    /// From the first day of this week (the locale's first weekday) through today.
+    func weekTotal(now: Date, calendar: Calendar = .current) -> Double {
+        weekly(1, now: now, calendar: calendar).first?.cost ?? 0
+    }
+
+    /// The last `count` calendar weeks ending with this one, oldest first. Key: the week's first day.
+    func weekly(_ count: Int, now: Date, calendar: Calendar = .current) -> [PeriodUsage] {
+        guard let thisWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start else { return [] }
+        return (0..<count).reversed().compactMap { back in
+            guard let start = calendar.date(byAdding: .weekOfYear, value: -back, to: thisWeek) else { return nil }
+            let keys = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+                .map { Self.dayKey($0, calendar: calendar) }
+            return period(Self.dayKey(start, calendar: calendar), keys)
+        }
+    }
+
+    /// The last `count` calendar months ending with this one, oldest first. Key: "yyyy-MM".
+    func monthly(_ count: Int, now: Date, calendar: Calendar = .current) -> [PeriodUsage] {
+        (0..<count).reversed().compactMap { back in
+            guard let d = calendar.date(byAdding: .month, value: -back, to: now) else { return nil }
+            let prefix = String(Self.dayKey(d, calendar: calendar).prefix(8))
+            let keys = Set(days.keys).union(details.keys).filter { $0.hasPrefix(prefix) }
+            return period(String(prefix.dropLast()), Array(keys))
+        }
+    }
+
+    private func period(_ key: String, _ dayKeys: [String]) -> PeriodUsage {
+        let cost = dayKeys.reduce(0) { $0 + (days[$1] ?? 0) }
+        let detailed = dayKeys.compactMap { details[$0] }
+        let tokens = detailed.isEmpty ? nil
+            : detailed.reduce(0) { $0 + $1.inputTokens + $1.outputTokens + $1.cacheWriteTokens + $1.cacheReadTokens }
+        return PeriodUsage(key: key, cost: cost, tokens: tokens)
     }
 
     /// The last `count` days ending today, oldest first, with 0 for days without usage.
@@ -289,6 +458,69 @@ enum CostParser {
         return history
     }
 
+    /// `ccusage session --json`: {"sessions": [{"sessionId": "-Users-me-app", "totalCost": 1.2, ...}]}.
+    /// Sorted by cost, highest first.
+    static func ccusageSessions(_ data: Data) -> [ProjectUsage]? {
+        struct Out: Decodable {
+            struct S: Decodable {
+                var sessionId: String
+                var totalCost: Double
+                var totalTokens: Int?
+                var lastActivity: String?
+                var modelsUsed: [String]?
+            }
+
+            var sessions: [S]
+        }
+        guard let out = try? JSONDecoder().decode(Out.self, from: data) else { return nil }
+        // One row per key: the list ids must be unique, so repeated keys are summed.
+        var byKey: [String: ProjectUsage] = [:]
+        for s in out.sessions {
+            var p = byKey[s.sessionId] ?? ProjectUsage(key: s.sessionId, cost: 0, tokens: 0, lastActivity: "", models: [])
+            p.cost += s.totalCost
+            p.tokens += s.totalTokens ?? 0
+            p.lastActivity = max(p.lastActivity, s.lastActivity ?? "")
+            p.models = Array(Set(p.models + (s.modelsUsed ?? []))).sorted()
+            byKey[s.sessionId] = p
+        }
+        return byKey.values.sorted { $0.cost == $1.cost ? $0.key < $1.key : $0.cost > $1.cost }
+    }
+
+    /// `ccusage blocks --json`: {"blocks": [...]}. Gap blocks are dropped; newest first.
+    static func ccusageBlocks(_ data: Data) -> [UsageBlock]? {
+        struct Out: Decodable {
+            struct B: Decodable {
+                struct Burn: Decodable { var costPerHour: Double? }
+                struct Projection: Decodable {
+                    var totalCost: Double?
+                    var remainingMinutes: Int?
+                }
+
+                var startTime: String
+                var endTime: String
+                var isActive: Bool?
+                var isGap: Bool?
+                var costUSD: Double?
+                var totalTokens: Int?
+                var models: [String]?
+                var burnRate: Burn?
+                var projection: Projection?
+            }
+
+            var blocks: [B]
+        }
+        guard let out = try? JSONDecoder().decode(Out.self, from: data) else { return nil }
+        return out.blocks.compactMap { b -> UsageBlock? in
+            guard b.isGap != true, let start = ClaudeUsageParser.date(b.startTime),
+                  let end = ClaudeUsageParser.date(b.endTime) else { return nil }
+            return UsageBlock(start: start, end: end, isActive: b.isActive ?? false, cost: b.costUSD ?? 0,
+                              tokens: b.totalTokens ?? 0, models: (b.models ?? []).filter { $0 != "<synthetic>" },
+                              costPerHour: b.burnRate?.costPerHour, projectedCost: b.projection?.totalCost,
+                              remainingMinutes: b.projection?.remainingMinutes)
+        }
+        .sorted { $0.start > $1.start }
+    }
+
     /// A plain {"yyyy-MM-dd": cost} ledger, as kept by a ccusage-based status line.
     static func ledger(_ data: Data) -> [String: Double]? {
         try? JSONDecoder().decode([String: Double].self, from: data)
@@ -336,9 +568,13 @@ enum UsageTools {
 
     static let ledgerURL = URL(fileURLWithPath: home + "/.cache/claude-statusline/ccusage-daily.json")
     static let todayCacheURL = URL(fileURLWithPath: "/tmp/claude/statusline-ccusage-cache.json")
-    static var ownCacheURL: URL {
+    static var ownCacheURL: URL { cacheURL("ccusage-daily.json") }
+    static var sessionCacheURL: URL { cacheURL("ccusage-session.json") }
+    static var blocksCacheURL: URL { cacheURL("ccusage-blocks.json") }
+
+    private static func cacheURL(_ name: String) -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ClaudeTerm/ccusage-daily.json")
+            .appendingPathComponent("ClaudeTerm/" + name)
     }
 }
 
@@ -349,13 +585,29 @@ final class UsageModel: ObservableObject {
     @Published private(set) var quotaUnavailable = false
     @Published private(set) var costMissingTool = false
     @Published private(set) var costIsRefreshing = false
+    /// Per-project cost over the last 30 days (`ccusage session`), highest first.
+    @Published private(set) var projects: [ProjectUsage] = []
+    /// 5-hour blocks over the last 7 days (`ccusage blocks`), newest first.
+    @Published private(set) var blocks: [UsageBlock] = []
+    @Published private(set) var ratio: QuotaRatioTracker
 
     private let claudePath: @Sendable () -> String?
+    private let defaults: UserDefaults?
     private var task: Task<Void, Never>?
     private var lastCostScan: Date?
+    private var lastBreakdownScan: Date?
+    static let ratioKey = "usage.quotaRatio"
 
-    init(claudePath: @escaping @Sendable () -> String? = { nil }) {
+    init(claudePath: @escaping @Sendable () -> String? = { nil }, defaults: UserDefaults? = nil) {
         self.claudePath = claudePath
+        self.defaults = defaults
+        ratio = defaults?.data(forKey: Self.ratioKey)
+            .flatMap { try? JSONDecoder().decode(QuotaRatioTracker.self, from: $0) } ?? QuotaRatioTracker()
+    }
+
+    var outlook: QuotaOutlook? {
+        guard let w = quota?.weekly else { return nil }
+        return QuotaOutlook.make(weekly: w, weeklyPerSession: ratio.weeklyPerSession, now: Date())
     }
 
     func start() {
@@ -381,6 +633,8 @@ final class UsageModel: ObservableObject {
         if let snap = await ClaudeUsageProbe.fetch(claude: claude) {
             quota = snap
             quotaUnavailable = false
+            ratio.record(snap)
+            if let data = try? JSONEncoder().encode(ratio) { defaults?.set(data, forKey: Self.ratioKey) }
         } else if quota == nil {
             quotaUnavailable = true
         }
@@ -409,6 +663,10 @@ final class UsageModel: ObservableObject {
                                           today: Self.freshTodayCost(), todayKey: CostHistory.dayKey(Date()))
         }
         if !history.days.isEmpty { costs = history }
+        if projects.isEmpty, let data = SafeFile.read(UsageTools.sessionCacheURL),
+           let cached = CostParser.ccusageSessions(data) { projects = cached }
+        if blocks.isEmpty, let data = SafeFile.read(UsageTools.blocksCacheURL),
+           let cached = CostParser.ccusageBlocks(data) { blocks = cached }
         if let last = lastCostScan, Date().timeIntervalSince(last) < 30 * 60 { return }
         guard let tool = UsageTools.find("ccusage", override: "CCTERM_CCUSAGE_PATH") else {
             costMissingTool = costs == nil
@@ -417,18 +675,48 @@ final class UsageModel: ObservableObject {
         lastCostScan = Date()
         costIsRefreshing = true
         defer { costIsRefreshing = false }
-        let since = String(CostHistory.dayKey(Calendar.current.date(byAdding: .day, value: -29, to: Date()) ?? Date())
-            .replacingOccurrences(of: "-", with: ""))
-        // ccusage is a bun/node script: run it through env so its interpreter is found on the search path.
-        guard let data = await ProcessRunner.run("/usr/bin/env",
-                                                 ["PATH=\(UsageTools.searchPath)", tool, "daily", "--json", "--breakdown", "--since", since],
-                                                 timeout: 600),
-              let parsed = CostParser.ccusageHistory(data) else { return }
-        var merged = parsed
-        merged.days.merge(history.days) { scanned, _ in scanned }
-        merged.details.merge(history.details) { scanned, _ in scanned }
-        costs = merged
-        try? FileManager.default.createDirectory(at: UsageTools.ownCacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: UsageTools.ownCacheURL, options: .atomic)
+        // Three calendar months, for the Monthly view; the Daily view shows the last 30 days of it.
+        let cal = Calendar.current
+        let monthStart = cal.dateInterval(of: .month, for: Date())?.start ?? Date()
+        let since = Self.sinceArg(cal.date(byAdding: .month, value: -2, to: monthStart) ?? monthStart)
+        if let data = await Self.ccusage(tool, ["daily", "--json", "--breakdown", "--since", since]),
+           let parsed = CostParser.ccusageHistory(data) {
+            var merged = parsed
+            merged.days.merge(history.days) { scanned, _ in scanned }
+            merged.details.merge(history.details) { scanned, _ in scanned }
+            costs = merged
+            Self.save(data, UsageTools.ownCacheURL)
+        }
+        // Each ccusage scan takes minutes: the project and block views refresh hourly.
+        // The timestamp is set only after both scans succeed, so a failed scan retries on the next cycle.
+        if let last = lastBreakdownScan, Date().timeIntervalSince(last) < 60 * 60 { return }
+        var ok = true
+        let month = Self.sinceArg(cal.date(byAdding: .day, value: -29, to: Date()) ?? Date())
+        if let data = await Self.ccusage(tool, ["session", "--json", "--since", month]),
+           let parsed = CostParser.ccusageSessions(data) {
+            projects = parsed
+            Self.save(data, UsageTools.sessionCacheURL)
+        } else { ok = false }
+        let week = Self.sinceArg(cal.date(byAdding: .day, value: -6, to: Date()) ?? Date())
+        if let data = await Self.ccusage(tool, ["blocks", "--json", "--since", week]),
+           let parsed = CostParser.ccusageBlocks(data) {
+            blocks = parsed
+            Self.save(data, UsageTools.blocksCacheURL)
+        } else { ok = false }
+        if ok { lastBreakdownScan = Date() }
+    }
+
+    /// ccusage is a bun/node script: run it through env so its interpreter is found on the search path.
+    private static func ccusage(_ tool: String, _ args: [String]) async -> Data? {
+        await ProcessRunner.run("/usr/bin/env", ["PATH=\(UsageTools.searchPath)", tool] + args, timeout: 600)
+    }
+
+    private static func sinceArg(_ d: Date) -> String {
+        CostHistory.dayKey(d).replacingOccurrences(of: "-", with: "")
+    }
+
+    private static func save(_ data: Data, _ url: URL) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
     }
 }

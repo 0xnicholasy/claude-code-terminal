@@ -15,42 +15,63 @@ struct SidebarTests {
         SessionInfo(sessionId: id, cwd: cwd, name: name, kind: kind, state: state, rssBytes: rss, ownedByApp: owned)
     }
 
-    @Test func sectionsFollowWhatTheUserCanDoInFixedOrder() {
+    @Test func openProjectsComeFirstInPaneOrderThenOthersByName() {
         let rows = [
-            s(a, "/w/one", "one", .idle),                                   // live elsewhere
-            s(b, "/w/two", "two", .blocked, owned: true),                   // blocked wins over owned
-            s(c, "/w/three", "three", .running, owned: true),
-            s(d, "/w/four", "four", .hibernated, kind: .hibernated),
+            s(a, "/w/zed", "zed chat", .idle, owned: true),
+            s(b, "/w/alpha", "alpha old", .hibernated, kind: .hibernated),
+            s(c, "/w/beta", "beta chat", .running, owned: true),
+            s(d, "/w/zed", "another", .idle),
         ]
-        let sections = SidebarLayout.sections(rows)
-        #expect(sections.map(\.kind) == [.needsYou, .openHere, .elsewhere, .asleep])
-        #expect(sections[0].entries.map(\.id) == [b])
-        #expect(sections[1].entries.map(\.id) == [c])
-        #expect(sections[3].entries.map(\.id) == [d])
-        // Empty sections are dropped.
-        #expect(SidebarLayout.sections([rows[0]]).map(\.kind) == [.elsewhere])
+        // Pane order: zed's pane was opened before beta's, so zed is Cmd-1 and must be on top.
+        let layout = SidebarLayout.projects(rows, paneOrder: [a, c])
+        #expect(layout.open.map(\.name) == ["zed", "beta"])
+        #expect(layout.other.map(\.name) == ["alpha"])
+        // Inside a project the pane comes first, then the rest by name.
+        #expect(layout.open[0].sessions.map(\.sessionId) == [a, d])
+        #expect(SidebarLayout.order(rows, paneOrder: [a, c]).map(\.sessionId) == [a, d, c, b])
     }
 
-    @Test func sessionsSharingAProjectCollapseIntoOneEntry() {
-        let rows = [s(a, "/w/omen", "omen-24", .idle), s(b, "/w/omen", "omen-53", .idle), s(c, "/w/zed", "zed", .idle)]
-        let entries = SidebarLayout.sections(rows)[0].entries
-        #expect(entries.count == 2)
-        guard case let .project(path, name, sessions) = entries[0] else {
-            Issue.record("expected a project entry first")
-            return
-        }
-        #expect(path == "/w/omen" && name == "omen" && sessions.map(\.sessionId) == [a, b])
-        #expect(entries[1] == .session(rows[2]))
+    @Test func waitingNeverMovesARow() {
+        let before = [s(a, "/w/one", "one", .idle, owned: true), s(b, "/w/two", "two", .idle, owned: true)]
+        var after = before
+        after[1].state = .blocked
+        let order = { (rows: [SessionInfo]) in SidebarLayout.order(rows, paneOrder: [a, b]).map(\.sessionId) }
+        #expect(order(before) == order(after))
+        #expect(SidebarLayout.projects(after, paneOrder: [a, b]).open[1].waiting == 1)
     }
 
-    @Test func projectNameShownOnlyWhenItAddsInformation() {
-        #expect(SidebarLayout.secondaryText(s(a, "/w/omen", "omen-24", .idle)) == nil)
-        #expect(SidebarLayout.secondaryText(s(a, "/w/omen", "Fix login bug", .idle)) == "omen")
+    @Test func newPanesJoinTheirProjectSoShortcutsStayInSidebarOrder() {
+        #expect(PaneOrder.insertionIndex(cwds: ["/w/x", "/w/y"], cwd: "/w/x") == 1)
+        #expect(PaneOrder.insertionIndex(cwds: ["/w/x", "/w/y"], cwd: "/w/z") == 2)
+        #expect(PaneOrder.grouped(["x1", "y1", "x2", "z1", "y2"], key: { String($0.prefix(1)) })
+            == ["x1", "x2", "y1", "y2", "z1"])
     }
 
-    @Test func memoryBarScalesToTheLargestLiveSession() {
-        #expect(SidebarLayout.memoryFraction(s(a, "/w", "x", .idle, rss: 512), maxBytes: 1024) == 0.5)
-        #expect(SidebarLayout.memoryFraction(s(a, "/w", "x", .hibernated, rss: 512), maxBytes: 1024) == 0)
+    @Test func waitingIsAnnouncedOnceAndNotForPromptsSeenAtLaunch() {
+        var t = WaitingTracker()
+        // Already waiting at the first update: recorded, not announced.
+        #expect(t.update([s(a, "/w", "x", .blocked), s(b, "/w", "y", .running)]).started.isEmpty)
+        let change = t.update([s(a, "/w", "x", .blocked), s(b, "/w", "y", .blocked)])
+        #expect(change.started.map(\.sessionId) == [b])
+        // Dropping out of the list for a moment does not re-announce the same prompt.
+        _ = t.update([s(a, "/w", "x", .blocked)])
+        #expect(t.update([s(a, "/w", "x", .blocked), s(b, "/w", "y", .blocked)]).started.isEmpty)
+        // Answered, then waiting again: announced again, and the answer clears the old banner.
+        #expect(t.update([s(b, "/w", "y", .running)]).stopped == [b])
+        #expect(t.update([s(b, "/w", "y", .blocked)]).started.map(\.sessionId) == [b])
+    }
+
+    @Test func modelReportsNewlyWaitingSessionsAndTheInteractiveCount() {
+        var seen: [(WaitingChange, Int)] = []
+        let m = WorkspaceModel(store: nil, claudePath: { nil }, attention: { seen.append(($0, $1)) })
+        m.apply(sessions: [s(a, "/w", "x", .running), s(b, "/w", "bg", .blocked, kind: .background)])
+        m.apply(sessions: [s(a, "/w", "x", .blocked), s(c, "/w", "bg2", .running, kind: .background)])
+        m.apply(sessions: [s(a, "/w", "x", .blocked), s(c, "/w", "bg2", .blocked, kind: .background)])
+        #expect(seen[2].0.started.isEmpty) // a background agent starting to wait gets no banner
+        #expect(seen.count == 3)
+        #expect(seen[1].0.started.map(\.sessionId) == [a])
+        // Background agents can sit waiting for days: they never count toward the Dock badge.
+        #expect(seen[1].1 == 1)
     }
 
     @Test func freedCountsEachHibernationOnceWithLastLiveMemory() {

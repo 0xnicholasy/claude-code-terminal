@@ -1,7 +1,20 @@
 import SwiftUI
 
+/// The ccusage reports, as one picker: `ccusage daily`, `weekly`, `monthly`, `session`, `blocks`.
+enum UsageBreakdown: String, CaseIterable, Identifiable {
+    case daily = "Daily"
+    case weekly = "Weekly"
+    case monthly = "Monthly"
+    case projects = "Projects"
+    case blocks = "5h Blocks"
+    var id: String { rawValue }
+}
+
 struct UsageView: View {
     @ObservedObject var usage: UsageModel
+    /// Folders of known sessions, to name ccusage's project keys.
+    var knownPaths: [String] = []
+    @AppStorage("usage.breakdown") private var breakdown: UsageBreakdown = .daily
 
     var body: some View {
         ScrollView {
@@ -27,6 +40,11 @@ struct UsageView: View {
             if let q = usage.quota {
                 quotaRow("5-hour window", q.fiveHour)
                 quotaRow("Weekly", q.weekly)
+                if let o = usage.outlook, !o.summary().isEmpty {
+                    Text(o.summary()).font(.callout).foregroundStyle(.secondary)
+                        .help("Reserve: even pace minus used. Session quotas: weekly headroom divided by the weekly share "
+                            + "one full 5-hour quota has used so far. Windows: 5-hour windows before the weekly reset.")
+                }
                 ForEach(q.scoped, id: \.name) { s in QuotaBar(title: "Weekly, \(s.name) only", window: s.window) }
                 if let t = q.updatedAt {
                     Text("From Claude Code, updated \(t.formatted(date: .omitted, time: .shortened))")
@@ -69,15 +87,67 @@ struct UsageView: View {
             if let c = usage.costs {
                 let now = Date()
                 HStack(spacing: 32) {
-                    figure(Formatting.dollars(c.monthTotal(now: now)), now.formatted(.dateTime.month(.wide)))
                     figure(Formatting.dollars(c.today(now: now)), "Today")
+                    figure(Formatting.dollars(c.weekTotal(now: now)), "This week")
+                    figure(Formatting.dollars(c.monthTotal(now: now)), now.formatted(.dateTime.month(.wide)))
+                    figure(Formatting.dollars(c.projectedMonthTotal(now: now)), "Month on pace")
                 }
-                DailyBars(days: c.recent(30, now: now), details: c.details, refreshing: usage.costIsRefreshing)
+                Picker("Breakdown", selection: $breakdown) {
+                    ForEach(UsageBreakdown.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                breakdownBody(c, now: now)
             } else if usage.costMissingTool {
                 Text("Install ccusage to see cost: bun add -g ccusage").foregroundStyle(.secondary)
             } else {
                 Text("Scanning transcripts with ccusage; the first run can take a few minutes.").foregroundStyle(.secondary)
             }
+        }
+    }
+
+    @ViewBuilder private func breakdownBody(_ c: CostHistory, now: Date) -> some View {
+        switch breakdown {
+        case .daily:
+            DailyBars(days: c.recent(30, now: now), details: c.details, refreshing: usage.costIsRefreshing)
+        case .weekly:
+            CostRows(rows: c.weekly(8, now: now).reversed().enumerated().map { i, p in
+                CostRow(id: p.key, title: i == 0 ? "This week" : "Week of " + Formatting.dayTitle(p.key),
+                        detail: p.tokens.map { Formatting.tokens($0) + " tokens" }, cost: p.cost, highlight: i == 0)
+            })
+        case .monthly:
+            CostRows(rows: c.monthly(3, now: now).reversed().enumerated().map { i, p in
+                CostRow(id: p.key, title: Formatting.monthTitle(p.key),
+                        detail: p.tokens.map { Formatting.tokens($0) + " tokens" }, cost: p.cost, highlight: i == 0)
+            })
+        case .projects:
+            if usage.projects.isEmpty {
+                pending("Per-project cost comes from ccusage session; it refreshes hourly.")
+            } else {
+                CostRows(rows: usage.projects.prefix(15).map { p in
+                    CostRow(id: p.key, title: ProjectKey.displayName(p.key, known: knownPaths),
+                            detail: [Formatting.tokens(p.tokens) + " tokens",
+                                     p.lastActivity.isEmpty ? nil : "last " + Formatting.dayTitle(p.lastActivity)]
+                                .compactMap { $0 }.joined(separator: " \u{00B7} "),
+                            cost: p.cost, highlight: false)
+                }, caption: "Last 30 days")
+            }
+        case .blocks:
+            if usage.blocks.isEmpty {
+                pending("5-hour blocks come from ccusage blocks; they refresh hourly.")
+            } else {
+                CostRows(rows: usage.blocks.prefix(12).map { b in
+                    CostRow(id: b.start.description, title: Formatting.blockTitle(b.start, b.end),
+                            detail: Formatting.blockDetail(b), cost: b.cost, highlight: b.isActive)
+                }, caption: "Last 7 days")
+            }
+        }
+    }
+
+    private func pending(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            if usage.costIsRefreshing { ProgressView().controlSize(.small) }
+            Text(text).foregroundStyle(.secondary)
         }
     }
 
@@ -154,6 +224,7 @@ struct QuotaBar: View {
 struct QuotaChip: View {
     let quota: QuotaSnapshot?
     let costs: CostHistory?
+    var outlook: QuotaOutlook?
 
     var body: some View {
         let now = Date()
@@ -190,6 +261,7 @@ struct QuotaChip: View {
         }
         .help([
             "Today: \(Formatting.dollars(c.today(now: now)))",
+            "This week: \(Formatting.dollars(c.weekTotal(now: now)))",
             "\(now.formatted(.dateTime.month(.wide))): \(Formatting.dollars(c.monthTotal(now: now))), on pace for \(Formatting.dollars(c.projectedMonthTotal(now: now)))",
             "API-equivalent cost from ccusage",
             Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab),
@@ -201,6 +273,7 @@ struct QuotaChip: View {
             .compactMap { $0 }.joined(separator: ", ")]
         if let e = w.expectedPercent(now: now) { lines.append("Even pace: \(Int(e.rounded()))% by now") }
         if let p = projected { lines.append("At this rate: \(Int(p.rounded()))% at reset") }
+        if w.windowMinutes >= 24 * 60, let o = outlook, !o.summary().isEmpty { lines.append(o.summary()) }
         lines.append(Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab))
         return lines.joined(separator: "\n")
     }
@@ -324,6 +397,44 @@ struct DayCard: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(Formatting.tokens(n)).monospacedDigit()
             Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+struct CostRow: Identifiable {
+    var id: String
+    var title: String
+    var detail: String?
+    var cost: Double
+    var highlight: Bool
+}
+
+/// A ccusage-style table: one line per period, project or block, with a bar scaled to the largest.
+struct CostRows: View {
+    let rows: [CostRow]
+    var caption: String?
+
+    var body: some View {
+        let top = max(rows.map(\.cost).max() ?? 0, 0.01)
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(rows) { r in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(r.title).fontWeight(r.highlight ? .semibold : .regular).lineLimit(1)
+                        if let d = r.detail, !d.isEmpty {
+                            Text(d).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Text(Formatting.dollars(r.cost)).monospacedDigit().fontWeight(.medium)
+                    }
+                    GeometryReader { geo in
+                        Capsule().fill(r.highlight ? Palette.accent : Color.secondary.opacity(0.45))
+                            .frame(width: max(3, geo.size.width * r.cost / top), height: 4)
+                    }
+                    .frame(height: 4)
+                }
+            }
+            if let caption { Text(caption).font(.caption2).foregroundStyle(.tertiary) }
         }
     }
 }
