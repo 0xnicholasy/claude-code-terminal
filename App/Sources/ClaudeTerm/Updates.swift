@@ -34,6 +34,14 @@ enum Version {
     }
 }
 
+enum CodeSigning {
+    /// First unexpired "Apple Development" identity hash in `security find-identity` output.
+    static func identity(in output: String) -> String? {
+        output.split(separator: "\n").first { $0.contains("\"Apple Development:") && !$0.contains("CSSMERR") }
+            .flatMap { $0.split(separator: " ").dropFirst().first }.map(String.init)
+    }
+}
+
 @MainActor
 final class UpdateModel: ObservableObject {
     enum State: Equatable {
@@ -88,7 +96,18 @@ final class UpdateModel: ObservableObject {
             state = .failed("brew upgrade failed. Run it in a terminal to see why: \(AppInfo.upgradeCommand)")
             return
         }
+        await Self.signInstalled()
         state = .installed(v)
+    }
+
+    /// Homebrew's build sandbox cannot reach the login keychain, so the formula's build is signed ad
+    /// hoc and macOS would drop ClaudeTerm's folder permissions. Re-sign the installed bundle with the
+    /// user's Apple Development certificate, outside the sandbox. Without a certificate it stays ad hoc.
+    static func signInstalled() async {
+        guard let out = await ProcessRunner.run("/usr/bin/security", ["find-identity", "-p", "codesigning"]),
+              let id = CodeSigning.identity(in: String(decoding: out, as: UTF8.self)) else { return }
+        let app = URL(fileURLWithPath: "/opt/homebrew/opt/claudeterm/ClaudeTerm.app").resolvingSymlinksInPath().path
+        _ = await ProcessRunner.run("/usr/bin/codesign", ["--force", "--deep", "--sign", id, app], timeout: 120)
     }
 
     /// Opens the new build once this process has exited. Panes come back through `claude --resume`.

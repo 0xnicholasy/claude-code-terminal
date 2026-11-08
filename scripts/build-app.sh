@@ -23,8 +23,9 @@ cp -R "$ROOT/build/DerivedData/Build/Products/Release/ClaudeTerm.app" "$ROOT/bui
 # so macOS forgets ClaudeTerm's folder permissions (Desktop, Documents) after each update; a
 # certificate signature keeps the same identity across builds. CLAUDETERM_SIGN_IDENTITY picks one
 # (a SHA-1 hash or name); otherwise the first valid "Apple Development" identity is used.
-# Homebrew points HOME at a temporary folder, so name the login keychain from the account's real
-# home directory (from the user database, not $HOME).
+# Inside Homebrew's build sandbox the keychain is unreachable and this falls back to ad hoc; the
+# app's updater re-signs the installed bundle afterwards. The keychain is named from the account's
+# home in the user database because Homebrew also points HOME at a temporary folder.
 REAL_HOME="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{ print $2 }')"
 KEYCHAIN="${REAL_HOME:-$HOME}/Library/Keychains/login.keychain-db"
 # Not `-v`: with HOME moved, security cannot reach the issuer chain to validate, so expired

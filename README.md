@@ -91,7 +91,11 @@ ClaudeTerm checks for a new release at launch and once a day (turn it off in **C
 brew upgrade 0xnicholasy/tap/claudeterm
 ```
 
-Builds are signed with your Apple Development certificate when the keychain has one, so macOS keeps ClaudeTerm's folder permissions across updates. Without one the app is signed ad hoc, and macOS asks for Desktop and Documents access again after each update.
+Homebrew builds are signed ad hoc, because its build sandbox cannot reach your keychain, and macOS then asks for Desktop and Documents access again after each update. Updates installed from the About window re-sign the app with your Apple Development certificate, when the keychain has one, so permissions stay. After a manual `brew upgrade`, do the same with:
+
+```sh
+codesign --force --deep --sign "Apple Development" "$(cd "$(brew --prefix claudeterm)/ClaudeTerm.app" && pwd -P)"
+```
 
 ## Build from source
 
