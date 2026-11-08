@@ -256,6 +256,10 @@ final class RepliesModel: ObservableObject {
 struct ConversationView: View {
     @ObservedObject var replies: RepliesModel
 
+    static func isSafeLink(_ url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+    }
+
     var body: some View {
         Group {
             if replies.replies.isEmpty {
@@ -282,6 +286,10 @@ struct ConversationView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .textBackgroundColor))
+        // Reply text is model output, so a link in it is untrusted: open only web links.
+        .environment(\.openURL, OpenURLAction { url in
+            ConversationView.isSafeLink(url) ? .systemAction : .discarded
+        })
     }
 }
 

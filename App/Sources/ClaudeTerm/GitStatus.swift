@@ -12,6 +12,12 @@ struct GitStatus: Equatable {
     var untracked = 0
     var conflicted = 0
 
+    /// This runs unprompted in whatever folder a session uses, which may be a downloaded repo with a
+    /// hostile .git/config. Turn off the config keys that make `git status` run a command.
+    /// Residual: a clean filter set in that same .git/config can still run; git has no switch for it.
+    static let safeConfig = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+                             "-c", "core.hooksPath=/dev/null"]
+
     var isClean: Bool { staged == 0 && modified == 0 && untracked == 0 && conflicted == 0 }
 
     static func parse(_ text: String) -> GitStatus? {
@@ -59,8 +65,8 @@ final class GitStatusModel: ObservableObject {
         guard let cwd, !cwd.isEmpty else { return }
         task = Task { [weak self] in
             while !Task.isCancelled {
-                let data = await ProcessRunner.run("/usr/bin/git", ["-C", cwd, "--no-optional-locks", "status",
-                                                                     "--porcelain=v2", "--branch"], timeout: 10)
+                let data = await ProcessRunner.run("/usr/bin/git", ["-C", cwd] + GitStatus.safeConfig
+                    + ["--no-optional-locks", "status", "--porcelain=v2", "--branch"], timeout: 10)
                 guard !Task.isCancelled, let self, self.cwd == cwd else { return }
                 self.status = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(GitStatus.parse)
                 try? await Task.sleep(for: .seconds(5))
