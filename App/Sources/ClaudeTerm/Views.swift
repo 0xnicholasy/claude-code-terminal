@@ -2,6 +2,7 @@ import AppKit
 import CCProtocol
 import GhosttyTerminal
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum DetailTab: String, CaseIterable, Identifiable {
     case sessions = "Sessions"
@@ -552,7 +553,22 @@ struct WindowFrameReader: NSViewRepresentable {
 extension TerminalViewState: @retroactive TerminalSurfaceOpenURLDelegate {
     public func terminalDidRequestOpenURL(_ url: String, kind _: TerminalOpenURLKind) {
         guard let target = LinkPolicy.url(url) else { return }
-        NSWorkspace.shared.open(target)
+        guard target.isFileURL else {
+            NSWorkspace.shared.open(target)
+            return
+        }
+        // Terminal output is untrusted: a printed path to an app, script or binary must never be
+        // launched by a click. Only plain documents open; everything else is shown in Finder.
+        let values = try? target.resourceValues(forKeys: [.contentTypeKey, .isExecutableKey, .isDirectoryKey, .isPackageKey])
+        switch LinkPolicy.fileAction(
+            type: values?.contentType,
+            isExecutable: values?.isExecutable ?? false,
+            isDirectory: values?.isDirectory ?? false,
+            isPackage: values?.isPackage ?? false
+        ) {
+        case .open: NSWorkspace.shared.open(target)
+        case .reveal: NSWorkspace.shared.activateFileViewerSelecting([target])
+        }
     }
 }
 
@@ -565,5 +581,20 @@ enum LinkPolicy {
         if text.hasPrefix("/") { return URL(fileURLWithPath: text) }
         guard let u = URL(string: text), let scheme = u.scheme?.lowercased(), schemes.contains(scheme) else { return nil }
         return u
+    }
+
+    enum FileAction: Equatable { case open, reveal }
+
+    /// Document types that are safe to hand to their default app.
+    static let openableTypes: [UTType] = [.image, .movie, .audio, .pdf, .plainText, .json]
+    /// Types that run code when opened. Checked first because scripts also conform to plain text.
+    static let launchableTypes: [UTType] = [.executable, .application, .applicationBundle, .script, .shellScript]
+
+    /// Open a local file only when it is a plain document; reveal anything that could run code,
+    /// any folder or bundle, and any file whose type is unknown.
+    static func fileAction(type: UTType?, isExecutable: Bool, isDirectory: Bool, isPackage: Bool) -> FileAction {
+        guard let type, !isDirectory, !isPackage, !isExecutable else { return .reveal }
+        if launchableTypes.contains(where: type.conforms(to:)) { return .reveal }
+        return openableTypes.contains(where: type.conforms(to:)) ? .open : .reveal
     }
 }

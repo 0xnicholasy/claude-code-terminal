@@ -2,6 +2,7 @@ import CCProtocol
 import Darwin
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import ClaudeTerm
 
 /// Fake process table. No real process is ever signalled in these tests.
@@ -192,5 +193,20 @@ struct ClosePaneTests {
         #expect(LinkPolicy.url("javascript:alert(1)") == nil)
         #expect(LinkPolicy.url("vscode://open?x") == nil)
         #expect(LinkPolicy.url("not a url") == nil)
+    }
+
+    @Test func fileLinksNeverLaunchCode() {
+        let open = { (t: UTType?) in LinkPolicy.fileAction(type: t, isExecutable: false, isDirectory: false, isPackage: false) }
+        #expect(open(.mpeg4Movie) == .open)
+        #expect(open(.png) == .open)
+        #expect(open(.pdf) == .open)
+        #expect(open(.shellScript) == .reveal)
+        #expect(open(UTType(filenameExtension: "command")) == .reveal)
+        #expect(open(.applicationBundle) == .reveal)
+        #expect(open(.unixExecutable) == .reveal)
+        #expect(open(UTType(filenameExtension: "pkg")) == .reveal)
+        #expect(open(nil) == .reveal)
+        #expect(LinkPolicy.fileAction(type: .plainText, isExecutable: true, isDirectory: false, isPackage: false) == .reveal)
+        #expect(LinkPolicy.fileAction(type: .folder, isExecutable: false, isDirectory: true, isPackage: false) == .reveal)
     }
 }
