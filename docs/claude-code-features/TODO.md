@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 6/25 done
+Progress: 7/26 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -33,7 +33,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - D5 The branch was cut from `origin/main` at `fc9999a` (v0.1.12). The uncommitted Usage/SessionSource edits in the main checkout are a separate change and out of scope; `main` is merged into the feature branch per `/implement` step 2 when it moves. (orchestrator, 2026-11-12)
 - D6 If an earlier milestone's PR is still unmerged when the next landing todo runs, that todo comments on the open PR (listing the new milestone) instead of opening a second one. | assumed, confirm by T08
 - D7 Claude Code 2.1.322 permission prompt: `1` (`TerminalKey.digit1`) approves once and Esc (`TerminalKey.escape`) denies. | confirmed by T01 (2026-11-12)
-- D8 The app passes no model flag at launch (`ClaudeCommand.swift:27-33`), so the 1M window must be detected from the transcript. If no field marks it, fall back to 1M once context tokens exceed 200K. | confirmed by T02 (2026-11-12): no field marks it
+- D8 The app passes no model flag at launch (`ClaudeCommand.swift:27-33`), so the 1M window must be detected from the transcript. If no field marks it, fall back to 1M once context tokens exceed 200K. | confirmed by T02 (2026-11-12): no field marks it. Amended by T06a (2026-11-12, owner choice after T07): models in `TranscriptStatus.millionTokenModels` (`claude-opus-5-5`) count as 1M from the start, because `/context` reports Opus 5.5 sessions as `/1m` while the 200K fallback showed them about 4x too full.
 - D9 CPU budget: with 8 idle open panes, M6 may add at most 1.0 percentage point to the app's average CPU over 60 s. | assumed, confirm by T07
 - D10 Allow/Deny is offered only when the transcript has exactly one pending main-thread `tool_use` and its tool is not `AskUserQuestion`, `ExitPlanMode`, `Task` or `Agent`. Those have other menus, or the prompt belongs to a subagent. | assumed, confirm by T12
 - D11 `claude -w <name>` combines with `--session-id <uuid>`, creates `<repo>/.claude/worktrees/<name>`, and the session's cwd is the worktree path. The pane records that path as its cwd, so restore and `--resume` run there. | confirmed by T03 (2026-11-12), with the trust and auto-removal notes in its Log entry
@@ -155,9 +155,18 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - done when: the app builds; the ring and line render in an Xcode preview or the running app; GATE is green. No row reorders when the activity changes.
 - verify: GATE, then BUILD
 
+### T06a Model table for the 1M context window
+- status: done (#8, 2026-11-12)
+- needs: T06
+- size: S
+- scope: Added by the owner after T07 found the ring at 42.5% of 200K while `/context` showed `85.1k/1m (9%)`. `TranscriptStatus.contextLimit` returns 1M for a model id starting with an entry of `millionTokenModels` (`claude-opus-5-5`), keeps the over-200K fallback, else 200K.
+- files: `App/Sources/ClaudeTerm/Transcript.swift` (contextLimit), `App/Tests/ClaudeTermTests/TranscriptTests.swift`
+- done when: an Opus 5.5 session under 200K tokens reports a 1M limit; other models keep 200K until usage passes it; GATE is green.
+- verify: GATE
+
 ### T07 Live check M6: activity line, context ring, CPU
 - status: todo
-- needs: T06
+- needs: T06, T06a
 - size: S
 - scope: Run the BUILD app.
   - In one pane, ask claude to run `sleep 20 && echo done`. Its row must read `Bash: sleep 20 && echo done` within 4 s and clear within 4 s after it finishes.
@@ -475,3 +484,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - 2026-11-12 T04 done. `Transcript.swift` adds `TranscriptStatus.parse` (pending main-thread tool_uses, activity, context tokens, model), `contextLimit` (200K, or 1M above 200K tokens) and `ContextLevel` (amber >= 0.70, red >= 0.85). `TranscriptTests` has 16 tests built on the T02 fixture lines. Mutation checks: removing the sidechain skip failed 4 tests; removing tool_result matching failed 4 tests. Code review (sonnet) found 3 Medium issues plus a test gap; fixed: text blocks are checked one by one for a real prompt, the wrapper-tag regex also matches underscores, digits, uppercase and attributes, and the unspecified `[1m]` model rule was dropped (4 tests added; the old regex fails the new wrapper test). GATE green (90 tests in 19 suites). Notes for T05/T09: an `isMeta` line or a `<command-name>` wrapper does not clear pending; a user line with both a tool_result and a text block clears everything; an assistant line without `usage` keeps the previous context value.
 - 2026-11-12 T05 done. `TranscriptStatusModel` (in `Transcript.swift`) polls every 2 s over `model.panes.filter(\.hasProcess)`, reads a 256 KB tail only when the mtime changes, and reads and parses off the main actor. It publishes only when a status changes, so an idle window is not re-rendered every tick. Paths are cached per id. A vanished file re-resolves on the next tick (T03: transcripts move after exit). A transcript not found yet (a new session before its first message) is looked up again only every 5th tick. A failed read is retried. Closed ids are dropped. Created in `Bootstrap.makeTranscripts`, started in the app's `.task` after the `isUnderTest` guard, and passed to `ContentView`. Review (sonnet): 2 Medium issues and a weak test, all fixed. Tests: 6 new (22 in TranscriptTests); mutations of the process filter, mtime skip, miss backoff and publish each fail a test. GATE green (96 tests in 19 suites). Not validated live yet; the live check is T07.
 - 2026-11-12 T06 done. `SidebarView` takes `statuses` from `TranscriptStatusModel` and passes each `SessionRow` its `TranscriptStatus?`. While running, the row shows the last pending tool's summary, or "Working" between tool calls, so the row height does not jump on every tool start and finish (a review finding). An always-visible `ContextRing` (11 pt) is coloured by `ContextLevel` with the new `Palette.contextAmber` / `contextRed`. The help text adds `TranscriptStatus.contextHelp`, e.g. "Context: 132K of 200K (66%)", using integer percent so 29% does not show as 28%. Rendered with `ImageRenderer` in a scratch test (not committed): light and dark PNGs show the activity lines, the waiting line, and normal/amber/red rings. A live window screenshot was not possible: the app opened in the background and its window was not listed for capture. Review (sonnet): 2 Medium; row-height jitter fixed, whole-sidebar re-render on a status change accepted (bounded to one render per real change). GATE green (97 tests in 19 suites); BUILD ok.
+- 2026-11-12 T06a done. Owner picked the model table after T07's ring check failed (ring 42.5% of 200K, `/context` 85.1k/1m). `contextLimit` returns 1M for `claude-opus-5-5*`, keeps the over-200K fallback, else 200K; D8 amended. 2 tests changed/added; removing the table line fails the new test (3 issues). GATE green (98 tests in 19 suites).

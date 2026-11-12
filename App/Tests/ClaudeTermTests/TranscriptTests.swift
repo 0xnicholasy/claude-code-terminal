@@ -103,8 +103,18 @@ struct TranscriptTests {
     }
 
     @Test func contextLimitIs200KUntilUsageProves1M() {
-        #expect(TranscriptStatus.contextLimit(model: "claude-opus-5-5", tokens: 200_000) == 200_000)
-        #expect(TranscriptStatus.contextLimit(model: "claude-opus-5-5", tokens: 211_201) == 1_000_000)
+        #expect(TranscriptStatus.contextLimit(model: "claude-sonnet-5-5", tokens: 200_000) == 200_000)
+        #expect(TranscriptStatus.contextLimit(model: nil, tokens: 200_000) == 200_000)
+        #expect(TranscriptStatus.contextLimit(model: "claude-sonnet-5-5", tokens: 211_201) == 1_000_000)
+    }
+
+    @Test func opus55HasTheMillionWindowFromTheStart() {
+        #expect(TranscriptStatus.contextLimit(model: "claude-opus-5-5", tokens: 84_973) == 1_000_000)
+        #expect(TranscriptStatus.contextLimit(model: "claude-opus-5-5[1m]", tokens: 10) == 1_000_000)
+        var s = TranscriptStatus()
+        s.model = "claude-opus-5-5"
+        s.contextTokens = 84_973
+        #expect(s.contextHelp == "Context: 85K of 1M (8%)")
     }
 
     @Test func contextHelpShowsTokensOfLimitAndPercent() {
