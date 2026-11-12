@@ -164,3 +164,88 @@ enum ContextLevel: Equatable {
         return .normal
     }
 }
+
+/// Live per-session status for every running pane, from a 2 s mtime poll that re-parses only changed transcripts.
+@MainActor
+final class TranscriptStatusModel: ObservableObject {
+    @Published private(set) var statuses: [String: TranscriptStatus] = [:]
+    private let path: @Sendable (String) -> String?
+    private let mtime: @Sendable (String) -> Date?
+    private let read: @Sendable (String) -> Data?
+    private var paths: [String: String] = [:]
+    private var seen: [String: Date] = [:]
+    /// Ticks left before a transcript that was not found is looked up again. A new session has no
+    /// file until its first message, and each lookup lists every project folder.
+    private var missBackoff: [String: Int] = [:]
+    static let missRetryTicks = 5
+    private var task: Task<Void, Never>?
+
+    init(
+        path: @escaping @Sendable (String) -> String? = { TranscriptReplies.transcriptPath(sessionId: $0) },
+        mtime: @escaping @Sendable (String) -> Date? = {
+            (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date
+        },
+        read: @escaping @Sendable (String) -> Data? = { TranscriptReplies.tail($0, maxBytes: 256 * 1024) }
+    ) {
+        self.path = path
+        self.mtime = mtime
+        self.read = read
+    }
+
+    /// Starts the 2 s poll over the panes `panes()` returns each tick; only those with a process are read. Idempotent.
+    func start(panes: @escaping @MainActor () -> [Pane]) {
+        guard task == nil else { return }
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refresh(panes().filter(\.hasProcess).map(\.id))
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+
+    /// One poll step: drops closed ids, then re-parses each id whose transcript mtime changed.
+    func refresh(_ ids: [String]) async {
+        let open = Set(ids)
+        paths = paths.filter { open.contains($0.key) }
+        seen = seen.filter { open.contains($0.key) }
+        missBackoff = missBackoff.filter { open.contains($0.key) }
+        // Assign only on change: every @Published write re-renders the views observing this model.
+        if statuses.keys.contains(where: { !open.contains($0) }) {
+            statuses = statuses.filter { open.contains($0.key) }
+        }
+        for id in ids {
+            let resolve = path, stat = mtime, load = read
+            var p = paths[id]
+            if p == nil {
+                if let left = missBackoff[id], left > 0 {
+                    missBackoff[id] = left - 1
+                    continue
+                }
+                p = await Task.detached { resolve(id) }.value
+                paths[id] = p
+                missBackoff[id] = p == nil ? Self.missRetryTicks - 1 : nil
+            }
+            guard let p else { continue }
+            let m = await Task.detached { stat(p) }.value
+            // A resumed session's transcript can move to another project dir, so a vanished file re-resolves next tick.
+            guard let m else {
+                paths[id] = nil
+                seen[id] = nil
+                continue
+            }
+            guard m != seen[id] else { continue }
+            // Mark the mtime seen only after a successful read, so a failed read is retried next tick.
+            // Read and parse off the main actor; a busy transcript's tail is up to 256 KB of JSON.
+            guard let parsed = await Task.detached(operation: { load(p).map(TranscriptStatus.parse) }).value
+            else { continue }
+            seen[id] = m
+            if statuses[id] != parsed { statuses[id] = parsed }
+        }
+    }
+}

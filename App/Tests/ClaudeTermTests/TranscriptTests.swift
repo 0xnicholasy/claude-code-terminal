@@ -149,4 +149,98 @@ struct TranscriptTests {
             #expect(s.activity == expected)
         }
     }
+
+    /// Counts closure calls from the model's detached tasks.
+    final class Calls: @unchecked Sendable { // @unchecked: every access goes through the lock
+        private let lock = NSLock()
+        private var counts: [String: Int] = [:]
+        var mtimes: [String: Date] = [:]
+        var paths: [String: String] = [:]
+        func hit(_ k: String) { lock.lock(); counts[k, default: 0] += 1; lock.unlock() }
+        func count(_ k: String) -> Int { lock.lock(); defer { lock.unlock() }; return counts[k, default: 0] }
+        func setMtime(_ id: String, _ d: Date?) { lock.lock(); mtimes[id] = d; lock.unlock() }
+        func mtime(_ id: String) -> Date? { lock.lock(); defer { lock.unlock() }; return mtimes[id] }
+    }
+
+    @MainActor static func model(_ calls: Calls) -> TranscriptStatusModel {
+        TranscriptStatusModel(
+            path: { calls.hit("path:\($0)"); return "/t/\($0).jsonl" },
+            mtime: { calls.hit("mtime:\($0)"); return calls.mtime($0) },
+            read: { p in
+                calls.hit("read")
+                // A later mtime means the file grew: a second pending tool appears.
+                let second = (calls.mtime(p)?.timeIntervalSince1970 ?? 0) >= 200
+                    ? "\n" + Self.toolLine(id: "u", name: "Glob", input: "{}") : ""
+                return Data((Self.toolLine(id: "t", name: "Grep", input: "{}") + second).utf8)
+            }
+        )
+    }
+
+    @MainActor @Test func unchangedMtimeDoesNotReread() async {
+        let calls = Calls()
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 100))
+        let m = Self.model(calls)
+        await m.refresh(["a"])
+        await m.refresh(["a"])
+        #expect(calls.count("read") == 1)
+        #expect(m.statuses["a"]?.activity == "Grep")
+    }
+
+    @MainActor @Test func changedMtimeReparses() async {
+        let calls = Calls()
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 100))
+        let m = Self.model(calls)
+        await m.refresh(["a"])
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 200))
+        await m.refresh(["a"])
+        #expect(calls.count("read") == 2)
+        #expect(m.statuses["a"]?.activity == "Glob")
+    }
+
+    @MainActor @Test func missingTranscriptIsLookedUpAgainOnlyAfterBackoff() async {
+        let calls = Calls()
+        let m = TranscriptStatusModel(path: { calls.hit("path:\($0)"); return nil }, mtime: { _ in nil }, read: { _ in nil })
+        for _ in 0..<TranscriptStatusModel.missRetryTicks { await m.refresh(["a"]) }
+        #expect(calls.count("path:a") == 1)
+        await m.refresh(["a"])
+        #expect(calls.count("path:a") == 2)
+    }
+
+    @MainActor @Test func paneWithoutProcessIsNeverRead() async {
+        let calls = Calls()
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 100))
+        let m = Self.model(calls)
+        let idle = Pane(sessionId: "a", cwd: "/tmp", title: "t", origin: .new)
+        #expect(!idle.hasProcess)
+        m.start { [idle] in [idle] }
+        try? await Task.sleep(for: .milliseconds(300))
+        m.stop()
+        #expect(calls.count("path:a") == 0 && calls.count("mtime:/t/a.jsonl") == 0 && calls.count("read") == 0)
+        #expect(m.statuses.isEmpty)
+    }
+
+    @MainActor @Test func closedPaneStatusIsRemoved() async {
+        let calls = Calls()
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 100))
+        let m = Self.model(calls)
+        await m.refresh(["a"])
+        #expect(m.statuses["a"] != nil)
+        await m.refresh([])
+        #expect(m.statuses["a"] == nil)
+        await m.refresh(["a"])
+        #expect(calls.count("path:a") == 2 && calls.count("read") == 2)
+    }
+
+    @MainActor @Test func vanishedFileReresolvesPath() async {
+        let calls = Calls()
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 100))
+        let m = Self.model(calls)
+        await m.refresh(["a"])
+        calls.setMtime("/t/a.jsonl", nil)
+        await m.refresh(["a"])
+        calls.setMtime("/t/a.jsonl", Date(timeIntervalSince1970: 100))
+        await m.refresh(["a"])
+        #expect(calls.count("path:a") == 2)
+        #expect(calls.count("read") == 2)
+    }
 }

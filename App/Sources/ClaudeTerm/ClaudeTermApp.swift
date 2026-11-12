@@ -6,18 +6,20 @@ import SwiftUI
 struct ClaudeTermApp: App {
     @StateObject private var model = Bootstrap.makeModel()
     @StateObject private var usage = Bootstrap.makeUsage()
+    @StateObject private var transcripts = Bootstrap.makeTranscripts()
     @StateObject private var clipboard = ClipboardModel()
     @StateObject private var updates = UpdateModel()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
 
     var body: some Scene {
         Window("ClaudeTerm", id: "main") {
-            ContentView(model: model, usage: usage, clipboard: clipboard)
+            ContentView(model: model, usage: usage, clipboard: clipboard, transcripts: transcripts)
                 .frame(minWidth: 760, minHeight: 480)
                 .task {
                     Bootstrap.start(model)
                     guard !Bootstrap.isUnderTest else { return }
                     clipboard.start()
+                    transcripts.start { [model] in model.panes }
                     updates.startAutomatic { v in
                         model.notice = "ClaudeTerm \(v) is available. ClaudeTerm > About ClaudeTerm to install it."
                     }
@@ -144,6 +146,8 @@ enum Bootstrap {
         let binary = claude
         return UsageModel(claudePath: { binary.get() }, defaults: .standard)
     }
+
+    static func makeTranscripts() -> TranscriptStatusModel { TranscriptStatusModel() }
 
     static func makeModel() -> WorkspaceModel {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }
