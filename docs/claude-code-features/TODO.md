@@ -63,7 +63,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: `git status --short` in the working copy (no spike files), then GATE
 
 ### T02 Spike: transcript fields, 1M signal, CPU baseline
-- status: done (#PR, 2026-11-12)
+- status: done (#3, 2026-11-12)
 - needs: none
 - size: S
 - scope: Read the last 200 lines of one normal session's transcript and one 1M-context session's transcript under `~/.claude/projects` and record:
