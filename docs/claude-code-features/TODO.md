@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 1/25 done
+Progress: 2/25 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -33,7 +33,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - D5 The branch was cut from `origin/main` at `fc9999a` (v0.1.12). The uncommitted Usage/SessionSource edits in the main checkout are a separate change and out of scope; `main` is merged into the feature branch per `/implement` step 2 when it moves. (orchestrator, 2026-11-12)
 - D6 If an earlier milestone's PR is still unmerged when the next landing todo runs, that todo comments on the open PR (listing the new milestone) instead of opening a second one. | assumed, confirm by T08
 - D7 Claude Code 2.1.322 permission prompt: `1` (`TerminalKey.digit1`) approves once and Esc (`TerminalKey.escape`) denies. | confirmed by T01 (2026-11-12)
-- D8 The app passes no model flag at launch (`ClaudeCommand.swift:27-33`), so the 1M window must be detected from the transcript. If no field marks it, fall back to 1M once context tokens exceed 200K. | assumed, confirm by T02
+- D8 The app passes no model flag at launch (`ClaudeCommand.swift:27-33`), so the 1M window must be detected from the transcript. If no field marks it, fall back to 1M once context tokens exceed 200K. | confirmed by T02 (2026-11-12): no field marks it
 - D9 CPU budget: with 8 idle open panes, M6 may add at most 1.0 percentage point to the app's average CPU over 60 s. | assumed, confirm by T07
 - D10 Allow/Deny is offered only when the transcript has exactly one pending main-thread `tool_use` and its tool is not `AskUserQuestion`, `ExitPlanMode`, `Task` or `Agent`. Those have other menus, or the prompt belongs to a subagent. | assumed, confirm by T12
 - D11 `claude -w <name>` combines with `--session-id <uuid>`, creates `<repo>/.claude/worktrees/<name>`, and the session's cwd is the worktree path. The pane records that path as its cwd, so restore and `--resume` run there. | assumed, confirm by T03
@@ -63,7 +63,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: `git status --short` in the working copy (no spike files), then GATE
 
 ### T02 Spike: transcript fields, 1M signal, CPU baseline
-- status: todo
+- status: done (#PR, 2026-11-12)
 - needs: none
 - size: S
 - scope: Read the last 200 lines of one normal session's transcript and one 1M-context session's transcript under `~/.claude/projects` and record:
@@ -440,3 +440,24 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
   - (b) `1` approves once (`touch /tmp/ct-spike` ran; tool_result "(Bash completed with no output)"). Esc denies (tool_result "The user doesn't want to proceed with this tool use..." then "[Request interrupted by user for tool use]"). `2` depends on the menu: with no `ask` rule it approved (file created; no `settings.local.json` written, so session-scoped). With an `ask` rule matching the command it rejected, because that menu has no "don't ask again" option and `2` is No. The app must never send `2`. D7 confirmed.
   - (c) Yes. The assistant line with the pending `tool_use` (`"name":"Bash","input":{"command":"touch /tmp/ct-spike"...}`) is the last message line in the jsonl while the prompt is on screen, with no matching `tool_result` yet.
   - (d) Yes. After relaunch, the saved-selected pane has `hasProcess=true`; the other restored pane has `hasProcess=false`, `terminal=nil`, and `sendKey` on it returned false. So it gets no buttons.
+- 2026-11-12 T02 transcript findings (Claude Code 2.1.322; read the last 200 lines of 26 recent transcripts, including sessions whose context passed 200K tokens and a Sonnet session).
+  - Each line is one JSON object with a top-level `type`: `user`, `assistant`, `attachment`, `system`, `api-request`, `api-request-blob`, `mode`, `ai-title`, `last-prompt`, `queue-operation`, `file-history-snapshot` and others. Only `user` and `assistant` lines carry `message`.
+  - `tool_use`: an item in `message.content` of an `assistant` line, `{"type":"tool_use","id","name","input","caller"}`. One API message is split across several `assistant` lines (thinking, text and each tool_use on its own line, same `message.id`).
+  - `tool_result`: an item in `message.content` of a `user` line, `{"type":"tool_result","tool_use_id","content"}`, plus `"is_error"` when set.
+  - `message.usage`: `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens` (also `cache_creation`, `iterations`, `service_tier`, `speed`). Context = input + cache read + cache creation.
+  - `message.model`: e.g. `claude-opus-5-5`, `claude-sonnet-5-5`. `<synthetic>` appears on locally generated assistant lines (with zero usage); skip those for model and context. The top-level `requestedModel` field repeats the model without a window suffix.
+  - Sidechain: every line has `isSidechain`. In the main file it is always `false`. Subagent lines live in a separate file, `<project>/<sessionId>/subagents/agent-<agentId>.jsonl`, with `isSidechain: true` and an `agentId` field. The main file's status needs no sidechain filter, but the parser should still skip `isSidechain: true` lines.
+  - 1M window (D8): none -> tokens > 200K fallback. `message.model`, `requestedModel`, the `api-request` `params.model` and `params.betas` look the same in sessions above and below 200K (no `context-1m` beta, no `[1m]` suffix).
+  - Fixture lines for T04 (hand-made and scrubbed; line 7 is deliberately garbled):
+    ```
+    {"type":"user","isSidechain":false,"uuid":"u1","timestamp":"2026-11-12T04:00:00.000Z","message":{"role":"user","content":"Fixture prompt"}}
+    {"type":"assistant","isSidechain":false,"uuid":"a1","timestamp":"2026-11-12T04:00:02.000Z","message":{"id":"msg_1","model":"claude-opus-5-5","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo fixture","description":"Fixture command"},"caller":{"type":"direct"}}],"usage":{"input_tokens":2,"cache_read_input_tokens":40000,"cache_creation_input_tokens":500,"output_tokens":30}}}
+    {"type":"user","isSidechain":false,"uuid":"u2","timestamp":"2026-11-12T04:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"fixture output"}]}}
+    {"type":"assistant","isSidechain":true,"agentId":"agentfixture","uuid":"s1","timestamp":"2026-11-12T04:00:04.000Z","message":{"id":"msg_s","model":"claude-sonnet-5-5","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_s","name":"Read","input":{"file_path":"fixture.txt"},"caller":{"type":"direct"}}],"usage":{"input_tokens":3,"cache_read_input_tokens":9000,"cache_creation_input_tokens":0,"output_tokens":12}}}
+    {"type":"assistant","isSidechain":false,"uuid":"a2","timestamp":"2026-11-12T04:00:06.000Z","message":{"id":"msg_2","model":"claude-opus-5-5","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_2","name":"Edit","input":{"file_path":"fixture.swift","old_string":"a","new_string":"b"},"caller":{"type":"direct"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":210000,"cache_creation_input_tokens":1200,"output_tokens":80}}}
+    {"type":"system","subtype":"turn_duration","isSidechain":false,"uuid":"y1","timestamp":"2026-11-12T04:00:07.000Z","durationMs":7000}
+    {"type":"assistant","isSidechain":false,"message":{"model":
+    {"type":"user","isSidechain":false,"uuid":"u3","timestamp":"2026-11-12T04:00:09.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"denied","is_error":true}]}}
+    ```
+    Lines 1-6 end with `toolu_2` (Edit) pending on the main thread and context 211,201 (so the 1M fallback applies). The sidechain `toolu_s` never counts. Line 7 must be skipped. Line 8 resolves `toolu_2`.
+  - CPU baseline (M6 before): BUILD (Release, this branch at 375e2dc), 8 restored panes all started (8 `claude --resume` children of ClaudeTerm), scratch layout via `CCTERM_LAYOUT_PATH`, idle 60 s, then the verify `top` command: avg 16.5% (12 samples 13.9-19.9). System load average during the run 6.3 (other sessions running), so T07 should measure under similar load or re-take this baseline in the same sitting.
