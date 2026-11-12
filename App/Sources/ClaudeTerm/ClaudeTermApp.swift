@@ -159,7 +159,13 @@ enum Bootstrap {
                                    request: { await DaemonClient.request($0, sessionId: $1) },
                                    confirm: TakeoverAlert.confirm,
                                    paneProcess: { PaneProcess.claudePid(sessionId: $0) },
-                                   attention: { AttentionNotifier.shared.handle($0, waitingCount: $1) })
+                                   attention: { AttentionNotifier.shared.handle($0, waitingCount: $1) },
+                                   promptStatus: { PromptNotification.freshStatus(sessionId: $0) })
+        AttentionNotifier.shared.pendingStatus = { PromptNotification.freshStatus(sessionId: $0) }
+        AttentionNotifier.shared.paneLaunched = { [weak model] id in
+            model?.panes.first(where: { $0.id == id })?.hasProcess ?? false
+        }
+        AttentionNotifier.shared.onAnswer = { [weak model] in model?.answer(sessionId: $0, toolUseId: $1, allow: $2) }
         AttentionNotifier.shared.isShowing = { [weak model] id in
             NSApp.isActive && model?.tab == .sessions && model?.selectedID == id
         }
