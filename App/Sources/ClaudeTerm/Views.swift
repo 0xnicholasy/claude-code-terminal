@@ -14,6 +14,7 @@ struct ContentView: View {
     @ObservedObject var model: WorkspaceModel
     @ObservedObject var usage: UsageModel
     @ObservedObject var clipboard: ClipboardModel
+    @ObservedObject var transcripts: TranscriptStatusModel
     @StateObject private var git = GitStatusModel()
     @StateObject private var replies = RepliesModel()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
