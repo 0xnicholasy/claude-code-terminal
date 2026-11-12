@@ -6,6 +6,9 @@ struct TranscriptStatus: Equatable {
         var id: String
         var name: String
         var summary: String
+        /// The whole Bash command, or the file path of a file tool; nil for any other tool. The
+        /// summary may cut it short, so this is what the user is told they are allowing.
+        var detail: String? = nil
     }
 
     var pending: [PendingTool] = []
@@ -44,6 +47,8 @@ struct TranscriptStatus: Equatable {
             var notebook_path: String?
             var command: String?
             var description: String?
+            var dangerouslyDisableSandbox: Bool?
+            var run_in_background: Bool?
         }
 
         struct Block: Decodable {
@@ -93,7 +98,8 @@ struct TranscriptStatus: Equatable {
                 if case let .blocks(blocks)? = line.message?.content {
                     for b in blocks where b.type == "tool_use" {
                         guard let id = b.id, let name = b.name else { continue }
-                        status.pending.append(PendingTool(id: id, name: name, summary: summary(name: name, input: b.input)))
+                        status.pending.append(PendingTool(id: id, name: name, summary: summary(name: name, input: b.input),
+                                                         detail: detail(name: name, input: b.input)))
                     }
                 }
                 guard let message = line.message, message.model != "<synthetic>" else { continue }
@@ -124,10 +130,28 @@ struct TranscriptStatus: Equatable {
         return !t.isEmpty && t.range(of: #"^<[A-Za-z][\w-]*[\s/>]"#, options: .regularExpression) == nil
     }
 
+    /// The full input text behind the summary: the whole Bash command or the file path.
+    private static func detail(name: String, input: Line.Input?) -> String? {
+        switch name {
+        case "Bash":
+            // A command that runs outside the sandbox or in the background is not shown whole.
+            if input?.dangerouslyDisableSandbox == true || input?.run_in_background == true { return nil }
+            return input?.command
+        case "Edit", "Write", "Read", "NotebookEdit": return filePath(name: name, input: input)
+        default: return nil
+        }
+    }
+
+    /// The path field the tool really uses: `notebook_path` for NotebookEdit, `file_path` for the others.
+    private static func filePath(name: String, input: Line.Input?) -> String? {
+        let path = name == "NotebookEdit" ? input?.notebook_path : input?.file_path
+        return path?.isEmpty == false ? path : nil
+    }
+
     private static func summary(name: String, input: Line.Input?) -> String {
         switch name {
         case "Edit", "Write", "Read", "NotebookEdit":
-            guard let path = input?.file_path ?? input?.notebook_path, !path.isEmpty else { return name }
+            guard let path = filePath(name: name, input: input) else { return name }
             return name + " " + (path as NSString).lastPathComponent
         case "Bash":
             guard let command = input?.command else { return name }

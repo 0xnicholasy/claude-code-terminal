@@ -144,7 +144,7 @@ struct WorkspaceTests {
 
     /// A model with one launched pane `a`, a recorder for sent keys and a settable fresh status.
     func promptModel(state: SessionState = .blocked, launch: Bool = true,
-                     status: TranscriptStatus? = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash")]),
+                     status: TranscriptStatus? = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash", detail: "ls")]),
                      sendResult: Bool = true, sent: SentKeys) -> WorkspaceModel {
         let m = WorkspaceModel(store: LayoutStore(url: scratchURL()), claudePath: { "/usr/bin/claude-fake" },
                                promptStatus: { _ in status },
@@ -187,8 +187,8 @@ struct WorkspaceTests {
 
     @Test func answerSendsNothingWithTwoPendingTools() {
         let sent = SentKeys()
-        let two = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash"),
-                                             .init(id: "t2", name: "Edit", summary: "Edit")])
+        let two = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash", detail: "ls"),
+                                             .init(id: "t2", name: "Edit", summary: "Edit", detail: "/w/a/f")])
         let m = promptModel(status: two, sent: sent)
         m.answer(sessionId: a, toolUseId: "t1", allow: true)
         #expect(sent.keys.isEmpty)
@@ -199,6 +199,30 @@ struct WorkspaceTests {
         let sent = SentKeys()
         let plan = TranscriptStatus(pending: [.init(id: "t1", name: "ExitPlanMode", summary: "plan")])
         let m = promptModel(status: plan, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerChecksAFileToolAgainstThePanesFolder() {
+        func edit(_ path: String) -> TranscriptStatus {
+            TranscriptStatus(pending: [.init(id: "t1", name: "Edit", summary: "Edit", detail: path)])
+        }
+        let inside = SentKeys()
+        promptModel(status: edit("/w/a/src/x.swift"), sent: inside).answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(inside.keys.map(\.1) == [.digit1])
+        let outside = SentKeys()
+        let m = promptModel(status: edit("/w/b/x.swift"), sent: outside)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(outside.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerSendsNothingForACommandTooLongToShowWhole() {
+        let sent = SentKeys()
+        let long = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash",
+                                                    detail: String(repeating: "x", count: 61))])
+        let m = promptModel(status: long, sent: sent)
         m.answer(sessionId: a, toolUseId: "t1", allow: true)
         #expect(sent.keys.isEmpty)
         #expect(m.notice == PromptAnswer.staleNotice)

@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 12/26 done
+Progress: 13/27 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -40,7 +40,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - D12 MCP rows show server name, scope and health status only. Scope comes from server names in `<project>/.mcp.json` and `~/.claude.json` (only the `mcpServers` key names are decoded) and from the `plugin:` prefix; anything else shows "unknown". | assumed, confirm by T21
 - D13 Plugin skills are found under `~/.claude/plugins/**/skills/*/SKILL.md`. | assumed, confirm by T20
 - D14 Clicking a Config row reveals its file in Finder (`NSWorkspace.activateFileViewerSelecting`). MCP rows have no click action. | assumed, confirm by T23
-- D15 Inline Allow (sidebar row, T10; notification, T11) approves an action whose summary can be cut: a Bash command shows only its first line, cut to 60 characters, and a file tool shows only the basename. Proposed after the automated security review of T10 (2026-11-12): offer Allow inline only when the summary shows the whole action (single-line Bash within the limit; file tools inside the project), put the full command or path in the row's help text, and otherwise fall back to "Waiting for you". | open, owner to decide before T12
+- D15 Inline Allow (sidebar row, T10; notification, T11) is offered only when the shown text is the whole action: a single-line Bash command of at most 60 characters, or a file tool (`Edit`, `Write`, `Read`, `NotebookEdit`) whose path is inside the session's project folder, shown project-relative. Any other tool gets no inline Allow; the row shows "Waiting for you" and the notification stays plain. The row's help text carries the full command or path. The notification body is hidden on a locked screen. Raised by the automated security review of T10 and T11. | owner, 2026-11-12 (picked "Restrict"); built by T12a
 
 ## Todos
 
@@ -235,9 +235,29 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
   The default click still opens the session.
 - verify: FOCUSED with `<TestClass>` = `SidebarTests`; GATE
 
+### T12a Show inline Allow only for a fully visible action (D15)
+- status: done (#PRNUM, 2026-11-12)
+- needs: T10, T11
+- size: M
+- scope: Added by the owner after the security review of T10/T11 (D15).
+  - `TranscriptStatus.PendingTool` gets the tool's full input text (`detail`: the whole Bash command, or the file path; nil for other tools), filled by the parser.
+  - `PromptAnswer` gets `label(_:cwd:) -> String?`: `Bash: <command>` for a single-line command of at most 60 characters; `<Tool> <project-relative path>` for a file tool whose path resolves inside `cwd` (symlinks resolved on both sides, so `/tmp` vs `/private/tmp` match); nil otherwise. `eligible(_:cwd:)` also requires a non-nil label, so `canSend`, the row and the notification all apply the same rule.
+  - The row and the notification show the label instead of `summary`; the row's help text adds the full `detail`.
+  - The `waiting-prompt` category sets `hiddenPreviewsBodyPlaceholder`, so the command is not shown on a locked screen.
+- files: `App/Sources/ClaudeTerm/Transcript.swift` (PendingTool, summary), `App/Sources/ClaudeTerm/Prompt.swift`, `App/Sources/ClaudeTerm/Workspace.swift` (`answer`), `App/Sources/ClaudeTerm/Views.swift` (SessionRow, PromptButtons), `App/Sources/ClaudeTerm/Attention.swift`; tests in `PromptTests`, `TranscriptTests`, `WorkspaceTests`, `SidebarTests`
+- done when: tests show:
+  - a 60-character single-line Bash command is eligible; 61 characters or a two-line command is not
+  - a file path inside the project is eligible and labelled project-relative; a path outside it, or a `..` path that escapes it, is not
+  - a `/tmp/...` project matches a `/private/tmp/...` path
+  - a tool other than Bash or the file tools is not eligible
+  - `answer` refuses an ineligible long command, and the notification content stays plain for it
+
+  Each check fails if its rule is removed. GATE is green.
+- verify: FOCUSED with `PromptTests`, `TranscriptTests`, `WorkspaceTests`, `SidebarTests`; GATE; BUILD
+
 ### T12 Live check M7: answer from notification and sidebar
 - status: todo
-- needs: T10, T11
+- needs: T10, T11, T12a
 - size: S
 - scope: Run the BUILD app with two panes.
   - In the background pane, trigger a Bash prompt (`touch /tmp/ct-m7-allow`). Approve from the notification. The file exists, and the selected pane never changes.
@@ -499,3 +519,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - 2026-11-12 T09 done. New `Prompt.swift` (`PromptAnswer.keys`, `eligible` per D10, `canSend`), `Pane.send` (key path only, never `paste`), and `WorkspaceModel.answer(sessionId:toolUseId:allow:)`, which re-reads a fresh status through the injected `promptStatus` closure, checks the guard against the sidebar's `rows` state, sends through the injected `sendKey` closure, and sets `notice` on a refused or failed send. Tests: 5 in PromptTests (8 cases) and 8 new in WorkspaceTests. Mutations: removing each guard (`.blocked`, `hasProcess`, same id, one pending, excluded tools, allow/deny key, both notices, the fresh read) fails at least one test. GATE green (111 tests in 20 suites). Note for T10/T11: `promptStatus` defaults to nil, so `answer` refuses every prompt until T11 wires a fresh tail-parse in Bootstrap; a pane with a process but no `TerminalViewState` yet gets the "Could not send" notice. Review (sonnet): 1 Medium, recorded as a Backlog item rather than fixed (the guard cannot tell a prompt on screen from an approved tool still running for up to the 5 s state poll; no transcript signal is known yet). Lows fixed: the two notices are constants and the tests compare exact text. Not validated live; the live check is T12.
 - 2026-11-12 T10 done. `SessionRow` shows `PromptButtons` (the pending tool's summary plus Allow and Deny, bordered mini buttons) instead of "Waiting for you" when the session is blocked, has an open pane, and `PromptAnswer.eligible` returns a tool. The buttons call `model.answer` with the tool_use id captured when they were drawn. Rendered with `NSHostingView` in a scratch test (not committed): a blocked Bash row shows `Bash: touch /tmp/ct-...` with Allow and Deny; a blocked AskUserQuestion row keeps "Waiting for you". Review (sonnet): 2 Medium, both fixed: the button line swallows taps in its gaps (`contentShape` + empty `onTapGesture`), so a near miss does not select the row, and the buttons are `fixedSize` with layout priority, so at a 220 pt sidebar the summary truncates (`Bash:...`) while Allow and Deny stay whole (re-rendered). Low fixed: buttons show only when the pane has a running process. GATE green (111 tests in 20 suites); BUILD ok. The buttons sit inside the row's own `Button`; that a click on them does not also select the row is checked live in T12. Until T11 wires `promptStatus`, every click is refused with the stale-prompt notice.
 - 2026-11-12 T11 done. `AttentionNotifier.start()` registers category `waiting-prompt` with `allow` and `deny` (destructive), no `.foreground`. `handle` asks the pure `PromptNotification.content(launched:status:)`: for a session whose pane has a process and whose fresh tail-parse (`PromptNotification.freshStatus`, 256 KB, not the 2 s cache) has one eligible pending tool, it sets the category, shows the tool summary as the body and puts `toolUseId` in `userInfo`; every other notification is unchanged. `didReceive` sends allow/deny to `onAnswer` without activating the app; the default click still activates and opens the session. `Bootstrap.makeModel` wires `onAnswer` to `WorkspaceModel.answer` and the model's `promptStatus` to the same fresh read, so the T10 sidebar buttons now work too. Test `notificationButtonsNeedALaunchedPaneAndOneAnswerableTool` (5 cases); mutations of the launched check, `eligible`, the body and the id each fail it. Review (sonnet): 1 Medium fixed: the fresh read (a scan of `~/.claude/projects` plus a 256 KB parse) ran on the main actor in `handle`; it now runs in `Task.detached` and the notification is posted after it. Low fixed: Allow needs `.authenticationRequired`, so it cannot approve from a locked screen. Lows left: an answer from a banner gives no feedback outside the app (only `notice`); a notification posted before the tool_use line reaches the transcript stays plain; `WorkspaceModel.answer` still reads on the main actor (one click). GATE green (112 tests in 20 suites); BUILD ok. Not validated live; T12 checks the real notification buttons.
+- 2026-11-12 T12a done (D15, owner picked "Restrict"). `PendingTool.detail` holds the whole Bash command, or the file path picked by tool (`file_path` for Edit/Write/Read, `notebook_path` for NotebookEdit). `PromptAnswer.label(_:cwd:)` gives the text shown on the row and the notification, or nil: Bash only when the trimmed command is printable ASCII (0x20-0x7E), at most 60 scalars, and runs neither outside the sandbox nor in the background; file tools only for an absolute path with no `..`, strictly inside an absolute project root that is not `/` or the home folder, with symlinks resolved on both sides (`lstat`-style existence, so a dangling link is refused), shown project-relative and printable ASCII. `eligible`, `canSend`, the row and the notification all require the label. The row shows the label on its own wrapping line with Allow and Deny below (never truncated) and puts the full detail in the help text; the notification category hides the body on a locked screen (`hiddenPreviewsBodyPlaceholder`). Review (sonnet): 5 Medium (hidden characters, path characters, NotebookEdit field, truncated label, `/` or home root) plus 3 Lows (dangling symlink, `..`, sandbox/background flags), all fixed in one round with a test each; mutations of each fix fail a test, except the scalar count, which the ASCII rule already covers. Render at 220 pt: a 54-character command wraps whole with buttons; a 77-character command shows "Waiting for you". GATE green (126 tests in 20 suites); BUILD ok. Not validated live: on a locked screen the body is hidden only when the user's Show Previews setting hides previews.
