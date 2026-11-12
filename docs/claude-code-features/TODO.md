@@ -236,7 +236,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `SidebarTests`; GATE
 
 ### T12a Show inline Allow only for a fully visible action (D15)
-- status: done (#PRNUM, 2026-11-12)
+- status: done (#15, 2026-11-12)
 - needs: T10, T11
 - size: M
 - scope: Added by the owner after the security review of T10/T11 (D15).
