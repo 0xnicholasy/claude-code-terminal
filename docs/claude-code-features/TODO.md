@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 3/25 done
+Progress: 4/25 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -92,7 +92,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: `git -C /tmp/ct-wt-spike worktree list` shows the new worktree; `ls ~/.claude/projects/*/<id>.jsonl` finds the transcript
 
 ### T04 Add TranscriptStatus parser
-- status: todo
+- status: done (#PR, 2026-11-12)
 - needs: T02
 - size: M
 - scope: New `Transcript.swift` with `struct TranscriptStatus: Equatable` and `static func parse(_ data: Data) -> TranscriptStatus`, using its own private `Decodable` line type. The fields T02 found are added there; `TranscriptReplies.Line` stays private and unchanged.
@@ -472,3 +472,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
   - From a subfolder (`<repo>/sub`): the worktree still goes to `<repo>/.claude/worktrees/<name>`, and the session cwd is the worktree root, not `<worktree>/sub`.
   - Exit behaviour: `/exit` in a session with no changes prints "Cleaning up worktree (no pending changes)" and removes the worktree and its branch. With uncommitted changes it asks Keep / Remove (Keep is the default). SIGTERM, which is how Close Pane stops claude (`Takeover.stop`), leaves the worktree in place (still marked `locked`). So D2 holds for Close Pane, but a user's own `/exit` can delete a clean worktree (Backlog item added).
   - D11 confirmed, with the corrections above: the recorded cwd is the worktree root even from a subfolder, and the path may come back with `/private` prefixed.
+- 2026-11-12 T04 done. `Transcript.swift` adds `TranscriptStatus.parse` (pending main-thread tool_uses, activity, context tokens, model), `contextLimit` (200K, or 1M above 200K tokens) and `ContextLevel` (amber >= 0.70, red >= 0.85). `TranscriptTests` has 16 tests built on the T02 fixture lines. Mutation checks: removing the sidechain skip failed 4 tests; removing tool_result matching failed 4 tests. Code review (sonnet) found 3 Medium issues plus a test gap; fixed: text blocks are checked one by one for a real prompt, the wrapper-tag regex also matches underscores, digits, uppercase and attributes, and the unspecified `[1m]` model rule was dropped (4 tests added; the old regex fails the new wrapper test). GATE green (90 tests in 19 suites). Notes for T05/T09: an `isMeta` line or a `<command-name>` wrapper does not clear pending; a user line with both a tool_result and a text block clears everything; an assistant line without `usage` keeps the previous context value.
