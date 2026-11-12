@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 8/26 done
+Progress: 9/26 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -180,7 +180,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: BUILD; `screencapture -x <working copy>/build/live-m6.png`; the T02 `top` command
 
 ### T08 Land M6
-- status: todo
+- status: done (#PRNUM, 2026-11-12)
 - needs: T07
 - size: S
 - scope: Push the branch and open the PR `feat/claude-code-features` -> `main` titled `feat(app): transcript status in sidebar (M6)`, to be merged as a merge commit by the owner. The body lists what changed, the T07 evidence and the CPU numbers. Confirm D6 handling with the owner if an earlier PR is unmerged.
@@ -493,3 +493,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
   - Ring recheck after T06a (rebuilt at 186b88f): same session resumed; `/context` reports `85.1k/1m tokens (9%)`, the parser has 84,973 tokens of a 1M limit (8%), and the ring arc is about 8% full. Within 3 points: pass.
   - CPU, owner away from the keyboard (8/8 panes started on both builds, idle 60 s, then the T02 `top` command): M6 (186b88f) 18.2% (load 6.5-10.8), pre-M6 (f82e826) 13.5% (load 6.4-18.7). Difference +4.7 points, over the D9 budget of 1.0. Earlier pre-M6 runs in the same day read 16.1% and 18.8%, so run-to-run noise under this load is about 5 points; one pair cannot confirm or rule out a D9 breach.
   - CPU, 3 alternating pairs (owner asked for them; load 3.7-6.6, lower than before): pre-M6 15.6 / 15.2 / 15.8%, M6 16.5 / 16.6 / 16.3%. Means 15.5% vs 16.5%, +0.9 points, inside the D9 budget of 1.0 but with little margin. Pair 1's pre-M6 run started only 5 of 8 panes; without it the difference is still +0.95. The earlier single pair (+4.7) ran under load up to 18.7 and is treated as noise.
+- 2026-11-12 T08 done. Landing PR #10 `feat(app): transcript status in sidebar (M6)`, `feat/claude-code-features` -> `main`, open for the owner to merge as a merge commit: https://github.com/0xnicholasy/claude-code-terminal/pull/10. No earlier landing PR existed, so D6 did not apply. Checks run locally at 431c134: GATE 98 tests in 19 suites passed; Protocol `swift test` 7 passed; ccgovd `swift build && swift test` 26 tests in 8 suites passed. The body carries the T07 evidence (activity line 2.5 s / 2.8 s, ring 8% vs `/context` 9%, CPU +0.9 points over 3 pairs).
