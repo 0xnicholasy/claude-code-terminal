@@ -207,7 +207,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `PromptTests`; FOCUSED with `WorkspaceTests`; GATE
 
 ### T10 Add Allow / Deny buttons to waiting rows
-- status: done (#PRNUM, 2026-11-12)
+- status: done (#13, 2026-11-12)
 - needs: T09, T06
 - size: S
 - scope: In `SessionRow`, when `isWaiting` and `PromptAnswer.eligible` returns a tool for a session with an open pane, replace `Waiting for you` with the pending tool line plus `Allow` and `Deny` buttons. The buttons call `model.answer` with the tool_use id captured when they were drawn. Other waiting rows keep the current text. Clicking a button does not select the row or focus the pane.
