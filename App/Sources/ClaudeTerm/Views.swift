@@ -356,7 +356,11 @@ struct SessionRow: View {
                             Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(Palette.textTertiary)
                         }
                     }
-                    if isWaiting {
+                    if isWaiting, let tool = answerable {
+                        PromptButtons(tool: tool) { allow in
+                            model.answer(sessionId: session.sessionId, toolUseId: tool.id, allow: allow)
+                        }
+                    } else if isWaiting {
                         Text("Waiting for you").font(.system(size: 11)).foregroundStyle(Palette.accent)
                     } else if let activity {
                         Text(activity).font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
@@ -386,6 +390,12 @@ struct SessionRow: View {
     }
 
     private var isWaiting: Bool { session.state == .blocked }
+    /// The pending tool the row can answer inline: only for a session whose pane has a running process, and only a
+    /// plain yes/no prompt (D10). Other waiting rows keep "Waiting for you".
+    private var answerable: TranscriptStatus.PendingTool? {
+        guard let status, model.panes.first(where: { $0.id == session.sessionId })?.hasProcess == true else { return nil }
+        return PromptAnswer.eligible(status)
+    }
     /// What the session is doing right now; only while it is working. Between tool calls it reads
     /// "Working", so the row keeps its height instead of jumping on every tool start and finish.
     private var activity: String? {
@@ -484,6 +494,34 @@ struct StateDot: View {
             }
         }
         .frame(width: 12, height: 12)
+    }
+}
+
+/// The waiting row's second line for a plain permission prompt: what the tool wants to do, plus
+/// Allow and Deny. The buttons answer the tool_use they were drawn for (`WorkspaceModel.answer`
+/// re-checks that it is still the pending one) and do not select the row or focus the pane.
+struct PromptButtons: View {
+    let tool: TranscriptStatus.PendingTool
+    let answer: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(tool.summary).font(.system(size: 11)).foregroundStyle(Palette.accent)
+                .lineLimit(1).truncationMode(.tail)
+            // In a narrow sidebar the summary truncates; the buttons keep their full size.
+            HStack(spacing: 4) {
+                Button("Allow") { answer(true) }
+                Button("Deny") { answer(false) }
+            }
+            .fixedSize()
+            .layoutPriority(1)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        // The row is itself a Button. A click in the gaps of this line is swallowed here, so a
+        // near miss on a mini button does not select the row or focus the pane.
+        .contentShape(Rectangle())
+        .onTapGesture {}
     }
 }
 
