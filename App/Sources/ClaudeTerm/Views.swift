@@ -21,7 +21,7 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(model: model)
+            SidebarView(model: model, statuses: transcripts.statuses)
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300)
         } detail: {
             ZStack {
@@ -169,6 +169,9 @@ enum Palette {
     /// Raised surfaces (cards, list containers) and their outline, tuned for both appearances.
     static let surface = Color.primary.opacity(0.045)
     static let hairline = Color.primary.opacity(0.08)
+    /// Context ring warning colours, from the terminal palette's yellow and red.
+    static let contextAmber = dynamic(light: 0xA87512, dark: 0xE3B26B)
+    static let contextRed = dynamic(light: 0xB6412F, dark: 0xE06C5A)
 
     static func dynamic(light: UInt32, dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -207,6 +210,8 @@ struct Card<Content: View>: View {
 
 struct SidebarView: View {
     @ObservedObject var model: WorkspaceModel
+    /// Transcript status of open panes with a running claude, by session id.
+    var statuses: [String: TranscriptStatus] = [:]
     /// Projects the user folded or unfolded, by project id. Without an entry, a project is expanded
     /// when it has a pane open or a session waiting, and folded otherwise, so the list stays short.
     @AppStorage("sidebar.projectExpansion") private var expansionJSON = "{}"
@@ -250,7 +255,8 @@ struct SidebarView: View {
         }
         if expanded.wrappedValue {
             ForEach(project.sessions) { s in
-                SessionRow(session: s, model: model, isSelected: s.sessionId == model.selectedID) {
+                SessionRow(session: s, model: model, status: statuses[s.sessionId],
+                           isSelected: s.sessionId == model.selectedID) {
                     model.open(s)
                 }
             }
@@ -330,6 +336,7 @@ struct ProjectHeader: View {
 struct SessionRow: View {
     let session: SessionInfo
     @ObservedObject var model: WorkspaceModel
+    var status: TranscriptStatus?
     let isSelected: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -351,11 +358,15 @@ struct SessionRow: View {
                     }
                     if isWaiting {
                         Text("Waiting for you").font(.system(size: 11)).foregroundStyle(Palette.accent)
+                    } else if let activity {
+                        Text(activity).font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+                            .lineLimit(1).truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 4)
                 // Details stay out of the way until the row is hovered or selected.
                 if hovering || isSelected { trailing }
+                if let fraction = status?.contextFraction { ContextRing(fraction: fraction) }
                 Text(shortcut ?? "")
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Palette.textTertiary)
@@ -363,7 +374,7 @@ struct SessionRow: View {
             }
             .padding(.leading, 20)
             .padding(.trailing, 6)
-            .padding(.vertical, isWaiting ? 5 : 0)
+            .padding(.vertical, isWaiting || activity != nil ? 5 : 0)
             .frame(minHeight: 28)
             .contentShape(Rectangle())
             .background(RoundedRectangle(cornerRadius: 7).fill(rowFill))
@@ -375,6 +386,12 @@ struct SessionRow: View {
     }
 
     private var isWaiting: Bool { session.state == .blocked }
+    /// What the session is doing right now; only while it is working. Between tool calls it reads
+    /// "Working", so the row keeps its height instead of jumping on every tool start and finish.
+    private var activity: String? {
+        guard session.state == .running, let status else { return nil }
+        return status.activity ?? "Working"
+    }
     private var isDim: Bool { session.state == .hibernated || session.demoted }
     private var nameColor: Color {
         if isSelected || isWaiting { return Palette.text }
@@ -388,6 +405,7 @@ struct SessionRow: View {
     private func helpText(_ shortcut: String?) -> String {
         var lines = [Formatting.shortPath(session.cwd), "State: \(stateText)"]
         if session.rssBytes > 0, session.state != .hibernated { lines.append("Memory: \(Formatting.bytes(session.rssBytes))") }
+        if let context = status?.contextHelp { lines.append(context) }
         if !session.ownedByApp, session.kind == .interactive { lines.append("Running in another terminal") }
         if let shortcut { lines.append(Shortcuts.hint("Show pane", shortcut)) }
         lines.append("Right-click for more actions")
@@ -416,6 +434,30 @@ struct SessionRow: View {
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Palette.textTertiary)
                 .fixedSize()
+        }
+    }
+}
+
+/// How full the session's context window is, coloured amber from 70% and red from 85%.
+struct ContextRing: View {
+    let fraction: Double
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Palette.hairline, lineWidth: 2)
+            Circle().trim(from: 0, to: min(max(fraction, 0), 1))
+                .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 11, height: 11)
+        .padding(.horizontal, 1)
+    }
+
+    private var color: Color {
+        switch ContextLevel.of(fraction) {
+        case .normal: Palette.textTertiary
+        case .amber: Palette.contextAmber
+        case .red: Palette.contextRed
         }
     }
 }

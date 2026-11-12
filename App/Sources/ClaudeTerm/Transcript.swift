@@ -147,6 +147,21 @@ struct TranscriptStatus: Equatable {
         }
     }
 
+    /// Share of the context window in use, for the sidebar ring; nil until a usage line is seen.
+    var contextFraction: Double? {
+        contextTokens.map { Double($0) / Double(Self.contextLimit(model: model, tokens: $0)) }
+    }
+
+    /// "Context: 132K of 200K (66%)" for the row's help text.
+    var contextHelp: String? {
+        guard let tokens = contextTokens else { return nil }
+        func short(_ n: Int) -> String {
+            Formatting.tokens(n).replacingOccurrences(of: #"\.0(?=[KMB])"#, with: "", options: .regularExpression)
+        }
+        let limit = Self.contextLimit(model: model, tokens: tokens)
+        return "Context: \(short(tokens)) of \(short(limit)) (\(tokens * 100 / limit)%)"
+    }
+
     /// No transcript field marks the 1M window, so more than 200K in use proves it.
     static func contextLimit(model: String?, tokens: Int) -> Int {
         if tokens > 200_000 { return 1_000_000 }
