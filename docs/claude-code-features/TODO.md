@@ -180,7 +180,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: BUILD; `screencapture -x <working copy>/build/live-m6.png`; the T02 `top` command
 
 ### T08 Land M6
-- status: done (#PRNUM, 2026-11-12)
+- status: done (#11, 2026-11-12)
 - needs: T07
 - size: S
 - scope: Push the branch and open the PR `feat/claude-code-features` -> `main` titled `feat(app): transcript status in sidebar (M6)`, to be merged as a merge commit by the owner. The body lists what changed, the T07 evidence and the CPU numbers. Confirm D6 handling with the owner if an earlier PR is unmerged.
