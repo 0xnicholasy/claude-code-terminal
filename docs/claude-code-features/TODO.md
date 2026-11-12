@@ -77,7 +77,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: BUILD, `open <working copy>/build/ClaudeTerm.app`, open 8 panes, wait 60 s, then `top -l 13 -s 5 -pid "$(pgrep -nx ClaudeTerm)" -stats cpu | grep -E '^[0-9.]+$' | tail -n 12 | awk '{s+=$1} END {printf "avg %.1f%%\n", s/NR}'`
 
 ### T03 Spike: `claude -w` behaviour on 2.1.322
-- status: done (#PR, 2026-11-12)
+- status: done (#4, 2026-11-12)
 - needs: none
 - size: S
 - scope: In a scratch git repo (`/tmp/ct-wt-spike`, `git init` plus one commit), run `claude --session-id <uuidgen lowercased> -w spike-a` and record in Log:
