@@ -162,9 +162,15 @@ struct TranscriptStatus: Equatable {
         return "Context: \(short(tokens)) of \(short(limit)) (\(tokens * 100 / limit)%)"
     }
 
-    /// No transcript field marks the 1M window, so more than 200K in use proves it.
+    /// Models whose sessions get the 1M window. No transcript field marks it: Claude Code
+    /// 2.1.322 reports `claude-opus-5-5` sessions as `/1m` in `/context` (T07). Matched as a
+    /// prefix so dated or suffixed ids still count.
+    static let millionTokenModels = ["claude-opus-5-5"]
+
+    /// 1M for a model in `millionTokenModels`, or once more than 200K in use proves it; else 200K.
     static func contextLimit(model: String?, tokens: Int) -> Int {
         if tokens > 200_000 { return 1_000_000 }
+        if let model, millionTokenModels.contains(where: { model.hasPrefix($0) }) { return 1_000_000 }
         return 200_000
     }
 }
