@@ -48,11 +48,12 @@ enum PromptNotification {
     static let deny = "deny"
     static let plainBody = "Waiting for your answer"
 
-    static func content(launched: Bool, status: TranscriptStatus?) -> PromptContent {
-        guard launched, let status, let tool = PromptAnswer.eligible(status) else {
+    static func content(launched: Bool, status: TranscriptStatus?, cwd: String) -> PromptContent {
+        guard launched, let status, let tool = PromptAnswer.eligible(status, cwd: cwd),
+              let label = PromptAnswer.label(tool, cwd: cwd) else {
             return PromptContent(category: nil, body: plainBody, toolUseId: nil)
         }
-        return PromptContent(category: category, body: tool.summary, toolUseId: tool.id)
+        return PromptContent(category: category, body: label, toolUseId: tool.id)
     }
 
     /// A fresh tail-parse of one transcript. Not the 2 s status cache: that can lag the blocked state.
@@ -94,7 +95,8 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
         let deny = UNNotificationAction(identifier: PromptNotification.deny, title: "Deny", options: [.destructive])
         center.setNotificationCategories([UNNotificationCategory(
             identifier: PromptNotification.category, actions: [allow, deny],
-            intentIdentifiers: [], options: [])])
+            intentIdentifiers: [], hiddenPreviewsBodyPlaceholder: PromptNotification.plainBody,
+            options: [])])
     }
 
     func handle(_ change: WaitingChange, waitingCount: Int) {
@@ -105,14 +107,14 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
         let fresh = change.started.filter { !(isShowing?($0.sessionId) ?? false) }
         for s in fresh {
             guard paneLaunched?(s.sessionId) ?? false, let read = pendingStatus else {
-                post(s, PromptNotification.content(launched: false, status: nil), to: center)
+                post(s, PromptNotification.content(launched: false, status: nil, cwd: s.cwd), to: center)
                 continue
             }
             // The fresh read scans ~/.claude/projects and parses a 256 KB tail: keep it off the main actor.
             let id = s.sessionId
             Task {
                 let status = await Task.detached { read(id) }.value
-                post(s, PromptNotification.content(launched: true, status: status), to: center)
+                post(s, PromptNotification.content(launched: true, status: status, cwd: s.cwd), to: center)
             }
         }
         if !fresh.isEmpty, !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }

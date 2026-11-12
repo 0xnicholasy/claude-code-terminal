@@ -378,7 +378,8 @@ final class WorkspaceModel: ObservableObject {
         guard let pane = panes.first(where: { $0.id == sessionId }),
               let state = rows.first(where: { $0.sessionId == sessionId })?.state,
               PromptAnswer.canSend(state: state, shownToolUseId: toolUseId,
-                                   current: promptStatus(sessionId), hasProcess: pane.hasProcess) else {
+                                   current: promptStatus(sessionId), hasProcess: pane.hasProcess,
+                                   cwd: pane.cwd) else {
             notice = PromptAnswer.staleNotice
             return
         }

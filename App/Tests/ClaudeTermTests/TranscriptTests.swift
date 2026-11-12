@@ -24,7 +24,7 @@ struct TranscriptTests {
 
     @Test func toolUseWithoutResultIsPending() {
         let s = Self.parse(0..<7)
-        #expect(s.pending == [.init(id: "toolu_2", name: "Edit", summary: "Edit fixture.swift")])
+        #expect(s.pending == [.init(id: "toolu_2", name: "Edit", summary: "Edit fixture.swift", detail: "fixture.swift")])
         #expect(s.activity == "Edit fixture.swift")
     }
 
@@ -149,6 +149,47 @@ struct TranscriptTests {
         let s = TranscriptStatus.parse(Data(text.utf8))
         #expect(s.pending.map(\.id) == ["toolu_2"])
         #expect(s.contextTokens == 211_201)
+    }
+
+    @Test func pendingToolKeepsTheWholeCommandOrPath() {
+        let long = String(repeating: "x", count: 80)
+        let cases: [(String, String, String?)] = [
+            ("Bash", #"{"command":"echo hi\nsecond"}"#, "echo hi\nsecond"),
+            ("Bash", #"{"command":"\#(long)"}"#, long),
+            ("Edit", #"{"file_path":"/a/b/c.swift"}"#, "/a/b/c.swift"),
+            ("NotebookEdit", #"{"notebook_path":"/n/nb.ipynb"}"#, "/n/nb.ipynb"),
+            ("Read", #"{}"#, nil),
+            ("Grep", #"{"pattern":"x"}"#, nil),
+        ]
+        for (name, input, expected) in cases {
+            let s = TranscriptStatus.parse(Data(Self.toolLine(id: "t", name: name, input: input).utf8))
+            #expect(s.pending.first?.detail == expected)
+        }
+    }
+
+    @Test func fileDetailUsesTheFieldOfTheTool() {
+        let both = #"{"file_path":"/f/file.txt","notebook_path":"/n/nb.ipynb"}"#
+        func detail(_ name: String) -> String? {
+            TranscriptStatus.parse(Data(Self.toolLine(id: "t", name: name, input: both).utf8)).pending.first?.detail
+        }
+        #expect(detail("NotebookEdit") == "/n/nb.ipynb")
+        #expect(detail("Edit") == "/f/file.txt")
+        #expect(detail("Read") == "/f/file.txt")
+        #expect(detail("Write") == "/f/file.txt")
+        #expect(detail("Grep") == nil)
+        let onlyNotebook = TranscriptStatus.parse(Data(Self.toolLine(
+            id: "t", name: "Edit", input: #"{"notebook_path":"/n/nb.ipynb"}"#).utf8))
+        #expect(onlyNotebook.pending.first?.detail == nil)
+    }
+
+    @Test func bashOutsideTheSandboxOrInTheBackgroundHasNoDetail() {
+        for input in [#"{"command":"ls","dangerouslyDisableSandbox":true}"#, #"{"command":"ls","run_in_background":true}"#] {
+            let s = TranscriptStatus.parse(Data(Self.toolLine(id: "t", name: "Bash", input: input).utf8))
+            #expect(s.pending.first?.detail == nil)
+        }
+        let plain = TranscriptStatus.parse(Data(Self.toolLine(
+            id: "t", name: "Bash", input: #"{"command":"ls","run_in_background":false}"#).utf8))
+        #expect(plain.pending.first?.detail == "ls")
     }
 
     @Test func summariesFollowToolRules() {

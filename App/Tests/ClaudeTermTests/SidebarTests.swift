@@ -63,18 +63,24 @@ struct SidebarTests {
 
     @Test func notificationButtonsNeedALaunchedPaneAndOneAnswerableTool() {
         func tool(_ id: String, _ name: String = "Bash") -> TranscriptStatus.PendingTool {
-            .init(id: id, name: name, summary: "run \(id)")
+            .init(id: id, name: name, summary: "run \(id)", detail: "ls")
         }
         let one = TranscriptStatus(pending: [tool("t1")])
         let plain = PromptContent(category: nil, body: "Waiting for your answer", toolUseId: nil)
-        #expect(PromptNotification.content(launched: true, status: one)
-            == PromptContent(category: "waiting-prompt", body: "run t1", toolUseId: "t1"))
-        #expect(PromptNotification.content(launched: false, status: one) == plain)
-        #expect(PromptNotification.content(launched: true, status: nil) == plain)
+        #expect(PromptNotification.content(launched: true, status: one, cwd: "/w")
+            == PromptContent(category: "waiting-prompt", body: "Bash: ls", toolUseId: "t1"))
+        #expect(PromptNotification.content(launched: false, status: one, cwd: "/w") == plain)
+        #expect(PromptNotification.content(launched: true, status: nil, cwd: "/w") == plain)
         #expect(PromptNotification.content(launched: true,
-                                           status: TranscriptStatus(pending: [tool("t2", "AskUserQuestion")])) == plain)
+                                           status: TranscriptStatus(pending: [tool("t2", "AskUserQuestion")]),
+                                           cwd: "/w") == plain)
         #expect(PromptNotification.content(launched: true,
-                                           status: TranscriptStatus(pending: [tool("t1"), tool("t2")])) == plain)
+                                           status: TranscriptStatus(pending: [tool("t1"), tool("t2")]),
+                                           cwd: "/w") == plain)
+        // A command that does not fit on the row is not shown whole, so no buttons (D15).
+        let long = TranscriptStatus.PendingTool(id: "t3", name: "Bash", summary: "x",
+                                                detail: String(repeating: "x", count: 61))
+        #expect(PromptNotification.content(launched: true, status: TranscriptStatus(pending: [long]), cwd: "/w") == plain)
     }
 
     @Test func modelReportsNewlyWaitingSessionsAndTheInteractiveCount() {
