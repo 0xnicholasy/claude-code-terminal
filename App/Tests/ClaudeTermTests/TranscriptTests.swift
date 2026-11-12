@@ -107,6 +107,18 @@ struct TranscriptTests {
         #expect(TranscriptStatus.contextLimit(model: "claude-opus-5-5", tokens: 211_201) == 1_000_000)
     }
 
+    @Test func contextHelpShowsTokensOfLimitAndPercent() {
+        var s = TranscriptStatus()
+        #expect(s.contextHelp == nil && s.contextFraction == nil)
+        s.contextTokens = 132_000
+        #expect(s.contextHelp == "Context: 132K of 200K (66%)")
+        #expect(s.contextFraction == 0.66)
+        s.contextTokens = 211_201
+        #expect(s.contextHelp == "Context: 211.2K of 1M (21%)")
+        s.contextTokens = 58_000
+        #expect(s.contextHelp == "Context: 58K of 200K (29%)")
+    }
+
     @Test func levelEdgesAt70And85Percent() {
         #expect(ContextLevel.of(0.6999) == .normal)
         #expect(ContextLevel.of(0.70) == .amber)

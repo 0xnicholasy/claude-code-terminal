@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 5/25 done
+Progress: 6/25 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -143,7 +143,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `TranscriptTests`, then GATE
 
 ### T06 Show activity line and context ring in the sidebar row
-- status: todo
+- status: done (#7, 2026-11-12)
 - needs: T05
 - size: M
 - scope: `SessionRow` gets the session's `TranscriptStatus?`, passed down from `SidebarView`.
@@ -474,3 +474,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
   - D11 confirmed, with the corrections above: the recorded cwd is the worktree root even from a subfolder, and the path may come back with `/private` prefixed.
 - 2026-11-12 T04 done. `Transcript.swift` adds `TranscriptStatus.parse` (pending main-thread tool_uses, activity, context tokens, model), `contextLimit` (200K, or 1M above 200K tokens) and `ContextLevel` (amber >= 0.70, red >= 0.85). `TranscriptTests` has 16 tests built on the T02 fixture lines. Mutation checks: removing the sidechain skip failed 4 tests; removing tool_result matching failed 4 tests. Code review (sonnet) found 3 Medium issues plus a test gap; fixed: text blocks are checked one by one for a real prompt, the wrapper-tag regex also matches underscores, digits, uppercase and attributes, and the unspecified `[1m]` model rule was dropped (4 tests added; the old regex fails the new wrapper test). GATE green (90 tests in 19 suites). Notes for T05/T09: an `isMeta` line or a `<command-name>` wrapper does not clear pending; a user line with both a tool_result and a text block clears everything; an assistant line without `usage` keeps the previous context value.
 - 2026-11-12 T05 done. `TranscriptStatusModel` (in `Transcript.swift`) polls every 2 s over `model.panes.filter(\.hasProcess)`, reads a 256 KB tail only when the mtime changes, and reads and parses off the main actor. It publishes only when a status changes, so an idle window is not re-rendered every tick. Paths are cached per id. A vanished file re-resolves on the next tick (T03: transcripts move after exit). A transcript not found yet (a new session before its first message) is looked up again only every 5th tick. A failed read is retried. Closed ids are dropped. Created in `Bootstrap.makeTranscripts`, started in the app's `.task` after the `isUnderTest` guard, and passed to `ContentView`. Review (sonnet): 2 Medium issues and a weak test, all fixed. Tests: 6 new (22 in TranscriptTests); mutations of the process filter, mtime skip, miss backoff and publish each fail a test. GATE green (96 tests in 19 suites). Not validated live yet; the live check is T07.
+- 2026-11-12 T06 done. `SidebarView` takes `statuses` from `TranscriptStatusModel` and passes each `SessionRow` its `TranscriptStatus?`. While running, the row shows the last pending tool's summary, or "Working" between tool calls, so the row height does not jump on every tool start and finish (a review finding). An always-visible `ContextRing` (11 pt) is coloured by `ContextLevel` with the new `Palette.contextAmber` / `contextRed`. The help text adds `TranscriptStatus.contextHelp`, e.g. "Context: 132K of 200K (66%)", using integer percent so 29% does not show as 28%. Rendered with `ImageRenderer` in a scratch test (not committed): light and dark PNGs show the activity lines, the waiting line, and normal/amber/red rings. A live window screenshot was not possible: the app opened in the background and its window was not listed for capture. Review (sonnet): 2 Medium; row-height jitter fixed, whole-sidebar re-render on a status change accepted (bounded to one render per real change). GATE green (97 tests in 19 suites); BUILD ok.
