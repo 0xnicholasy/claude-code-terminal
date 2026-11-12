@@ -61,6 +61,22 @@ struct SidebarTests {
         #expect(t.update([s(b, "/w", "y", .blocked)]).started.map(\.sessionId) == [b])
     }
 
+    @Test func notificationButtonsNeedALaunchedPaneAndOneAnswerableTool() {
+        func tool(_ id: String, _ name: String = "Bash") -> TranscriptStatus.PendingTool {
+            .init(id: id, name: name, summary: "run \(id)")
+        }
+        let one = TranscriptStatus(pending: [tool("t1")])
+        let plain = PromptContent(category: nil, body: "Waiting for your answer", toolUseId: nil)
+        #expect(PromptNotification.content(launched: true, status: one)
+            == PromptContent(category: "waiting-prompt", body: "run t1", toolUseId: "t1"))
+        #expect(PromptNotification.content(launched: false, status: one) == plain)
+        #expect(PromptNotification.content(launched: true, status: nil) == plain)
+        #expect(PromptNotification.content(launched: true,
+                                           status: TranscriptStatus(pending: [tool("t2", "AskUserQuestion")])) == plain)
+        #expect(PromptNotification.content(launched: true,
+                                           status: TranscriptStatus(pending: [tool("t1"), tool("t2")])) == plain)
+    }
+
     @Test func modelReportsNewlyWaitingSessionsAndTheInteractiveCount() {
         var seen: [(WaitingChange, Int)] = []
         let m = WorkspaceModel(store: nil, claudePath: { nil }, attention: { seen.append(($0, $1)) })
