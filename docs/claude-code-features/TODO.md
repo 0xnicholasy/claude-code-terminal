@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 2/25 done
+Progress: 3/25 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -36,7 +36,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - D8 The app passes no model flag at launch (`ClaudeCommand.swift:27-33`), so the 1M window must be detected from the transcript. If no field marks it, fall back to 1M once context tokens exceed 200K. | confirmed by T02 (2026-11-12): no field marks it
 - D9 CPU budget: with 8 idle open panes, M6 may add at most 1.0 percentage point to the app's average CPU over 60 s. | assumed, confirm by T07
 - D10 Allow/Deny is offered only when the transcript has exactly one pending main-thread `tool_use` and its tool is not `AskUserQuestion`, `ExitPlanMode`, `Task` or `Agent`. Those have other menus, or the prompt belongs to a subagent. | assumed, confirm by T12
-- D11 `claude -w <name>` combines with `--session-id <uuid>`, creates `<repo>/.claude/worktrees/<name>`, and the session's cwd is the worktree path. The pane records that path as its cwd, so restore and `--resume` run there. | assumed, confirm by T03
+- D11 `claude -w <name>` combines with `--session-id <uuid>`, creates `<repo>/.claude/worktrees/<name>`, and the session's cwd is the worktree path. The pane records that path as its cwd, so restore and `--resume` run there. | confirmed by T03 (2026-11-12), with the trust and auto-removal notes in its Log entry
 - D12 MCP rows show server name, scope and health status only. Scope comes from server names in `<project>/.mcp.json` and `~/.claude.json` (only the `mcpServers` key names are decoded) and from the `plugin:` prefix; anything else shows "unknown". | assumed, confirm by T21
 - D13 Plugin skills are found under `~/.claude/plugins/**/skills/*/SKILL.md`. | assumed, confirm by T20
 - D14 Clicking a Config row reveals its file in Finder (`NSWorkspace.activateFileViewerSelecting`). MCP rows have no click action. | assumed, confirm by T23
@@ -77,7 +77,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: BUILD, `open <working copy>/build/ClaudeTerm.app`, open 8 panes, wait 60 s, then `top -l 13 -s 5 -pid "$(pgrep -nx ClaudeTerm)" -stats cpu | grep -E '^[0-9.]+$' | tail -n 12 | awk '{s+=$1} END {printf "avg %.1f%%\n", s/NR}'`
 
 ### T03 Spike: `claude -w` behaviour on 2.1.322
-- status: todo
+- status: done (#4, 2026-11-12)
 - needs: none
 - size: S
 - scope: In a scratch git repo (`/tmp/ct-wt-spike`, `git init` plus one commit), run `claude --session-id <uuidgen lowercased> -w spike-a` and record in Log:
@@ -433,6 +433,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - Prompt palette (not picked 2026-11-12)
 - "New Session in Worktree" in the row context menu (only Cmd-Shift-T and the menu bar are in scope)
 - Worktree cleanup from the app (excluded by D2; stays with `git-worktree-clean`)
+- A worktree pane whose folder is gone (claude's own `/exit` removes a clean `-w` worktree, T03): restore would `--resume` in a missing cwd. Show it as gone instead of launching (found 2026-11-12)
 
 ## Log
 - 2026-11-12 T01 done. Spike ran a Debug build with a scratch layout (`CCTERM_LAYOUT_PATH`), a temporary Go-menu item calling `Pane.terminal?.sendKey`, and a spike folder whose `.claude/settings.json` forced a Bash prompt (the owner's `defaultMode: auto` approved `touch` with no prompt). Claude Code 2.1.322. Spike code dropped; `git status` clean; GATE green (74 tests in 18 suites).
@@ -461,3 +462,13 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
     ```
     Lines 1-6 end with `toolu_2` (Edit) pending on the main thread and context 211,201 (so the 1M fallback applies). The sidechain `toolu_s` never counts. Line 7 must be skipped. Line 8 resolves `toolu_2`.
   - CPU baseline (M6 before): BUILD (Release, this branch at 375e2dc), 8 restored panes all started (8 `claude --resume` children of ClaudeTerm), scratch layout via `CCTERM_LAYOUT_PATH`, idle 60 s, then the verify `top` command: avg 16.5% (12 samples 13.9-19.9). System load average during the run 6.3 (other sessions running), so T07 should measure under similar load or re-take this baseline in the same sitting.
+- 2026-11-12 T03 done. Scratch repo `/tmp/ct-wt-spike` (`git init`, one commit); interactive `claude` driven in a detached tmux on Claude Code 2.1.322.
+  - Trust first: `claude -w` in a folder that was never trusted exits 1 with "Error creating worktree: Workspace trust not yet accepted. Run `claude` once in this directory and accept the trust dialog, then retry with --worktree." T15/T16 must surface that message (or check trust) instead of showing a dead pane.
+  - Path and branch: `claude --session-id <id> -w spike-a` creates `<repo>/.claude/worktrees/spike-a` on branch `worktree-spike-a`, from HEAD; `git worktree list` shows it `locked` while claude runs.
+  - `--session-id` is honoured with `-w`: the transcript is `<id>.jsonl`. While the session ran it was under `~/.claude/projects/-private-tmp-ct-wt-spike--claude-worktrees-spike-a/` (project dir from the worktree path). After `/exit` it was under the launch folder's project dir instead (`-private-tmp-ct-wt-spike/` for a launch from the repo root, `-private-tmp-ct-wt-spike-sub/` for a launch from `sub`), and the worktree project dir was left empty. A later `--resume` from the worktree found it there and did not move it back. So T04/T05 must find a transcript by `~/.claude/projects/*/<id>.jsonl` on each poll, not cache a path derived from the pane cwd.
+  - `claude agents --json` reports `"cwd": "/private/tmp/ct-wt-spike/.claude/worktrees/spike-a"` (note the `/private` realpath of `/tmp`) and `"name": "spike-a-fc"`.
+  - `claude --resume <id>` run from the worktree folder resumes it (prior prompt and reply shown).
+  - Names: `a.b`, `a_b` and `--worktree=-x` are accepted as-is. `a/b` is accepted and becomes folder `a+b`. Rejected with exit 1: `a b` ("Invalid worktree name "a b": each "/"-separated segment must be non-empty and contain only letters, digits, dots, underscores, and dashes"), `.` and `..` ("must not contain "." or ".." path segments"). `-w -x` fails as "error: unknown option '-x'", so the app must pass `--worktree=<name>` or reject a leading dash.
+  - From a subfolder (`<repo>/sub`): the worktree still goes to `<repo>/.claude/worktrees/<name>`, and the session cwd is the worktree root, not `<worktree>/sub`.
+  - Exit behaviour: `/exit` in a session with no changes prints "Cleaning up worktree (no pending changes)" and removes the worktree and its branch. With uncommitted changes it asks Keep / Remove (Keep is the default). SIGTERM, which is how Close Pane stops claude (`Takeover.stop`), leaves the worktree in place (still marked `locked`). So D2 holds for Close Pane, but a user's own `/exit` can delete a clean worktree (Backlog item added).
+  - D11 confirmed, with the corrections above: the recorded cwd is the worktree root even from a subfolder, and the path may come back with `/private` prefixed.
