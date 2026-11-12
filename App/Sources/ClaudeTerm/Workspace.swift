@@ -26,6 +26,12 @@ final class Pane: ObservableObject, Identifiable {
 
     var hasProcess: Bool { launched != nil }
 
+    /// Presses a key in this pane's terminal. False when there is no terminal to receive it.
+    /// Never paste text here: a key press is the only input path for answering a prompt.
+    func send(_ key: TerminalKey) -> Bool {
+        terminal?.sendKey(key) ?? false
+    }
+
     func markLaunched(_ spec: LaunchSpec) {
         launched = spec
         origin = .resume
@@ -132,6 +138,10 @@ final class WorkspaceModel: ObservableObject {
     /// Sessions that just started or stopped waiting, plus how many interactive sessions wait now
     /// (`AttentionNotifier` in the app: notification banner and Dock badge; no-op in tests).
     private let attention: (WaitingChange, Int) -> Void
+    /// A fresh tail-parse of a session's transcript, by session id (wired in Bootstrap; nil in tests by default).
+    private let promptStatus: (String) -> TranscriptStatus?
+    /// Presses a key in a pane (`Pane.send` in the app, a recorder in tests).
+    private let sendKey: (Pane, TerminalKey) -> Bool
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
@@ -140,9 +150,13 @@ final class WorkspaceModel: ObservableObject {
          processes: ProcessControl = SystemProcessControl(),
          confirm: @escaping (SessionInfo) -> Bool = { _ in false },
          paneProcess: @escaping (String) -> Int32? = { _ in nil },
-         attention: @escaping (WaitingChange, Int) -> Void = { _, _ in }) {
+         attention: @escaping (WaitingChange, Int) -> Void = { _, _ in },
+         promptStatus: @escaping (String) -> TranscriptStatus? = { _ in nil },
+         sendKey: @escaping (Pane, TerminalKey) -> Bool = { $0.send($1) }) {
         self.paneProcess = paneProcess
         self.attention = attention
+        self.promptStatus = promptStatus
+        self.sendKey = sendKey
         self.store = store
         self.claudePath = claudePath
         self.notify = notify
@@ -356,6 +370,21 @@ final class WorkspaceModel: ObservableObject {
             return
         }
         newSession(cwd: cwd)
+    }
+
+    /// Answers a pending permission prompt with a key press. The transcript is re-read first, so a
+    /// prompt that was answered or replaced since the button was shown is never answered blindly.
+    func answer(sessionId: String, toolUseId: String, allow: Bool) {
+        guard let pane = panes.first(where: { $0.id == sessionId }),
+              let state = rows.first(where: { $0.sessionId == sessionId })?.state,
+              PromptAnswer.canSend(state: state, shownToolUseId: toolUseId,
+                                   current: promptStatus(sessionId), hasProcess: pane.hasProcess) else {
+            notice = PromptAnswer.staleNotice
+            return
+        }
+        if !sendKey(pane, PromptAnswer.keys(allow: allow)) {
+            notice = PromptAnswer.failedSendNotice
+        }
     }
 
     /// Removes the pane and ends its claude. Closing the view alone left claude running in the

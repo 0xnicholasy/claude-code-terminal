@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 9/26 done
+Progress: 10/26 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -189,7 +189,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: GATE; `cd <working copy>/Protocol && swift test`; `cd <working copy>/ccgovd && swift build && swift test`; `gh pr view feat/claude-code-features --json state,url,baseRefName`
 
 ### T09 Add prompt answering with a stale-prompt guard
-- status: todo
+- status: done (#12, 2026-11-12)
 - needs: T01, T05
 - size: M
 - scope: New `Prompt.swift` with `enum PromptAnswer`:
@@ -443,6 +443,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - "New Session in Worktree" in the row context menu (only Cmd-Shift-T and the menu bar are in scope)
 - Worktree cleanup from the app (excluded by D2; stays with `git-worktree-clean`)
 - A worktree pane whose folder is gone (claude's own `/exit` removes a clean `-w` worktree, T03): restore would `--resume` in a missing cwd. Show it as gone instead of launching (found 2026-11-12)
+- Prompt guard gap (T09 review, Medium): session state refreshes every 5 s (`SessionSource` and ccgovd `intervalSec`), and an approved tool that is still running has no `tool_result` yet, so for up to about 5 s after the user answers in the terminal the guard still passes. A late Deny then sends Esc, which interrupts the running tool; a late Allow types a stray `1`. Needs a signal that the prompt is still on screen (fresher state at click time, or a transcript or hook marker); T12 should measure whether Claude Code writes anything at approval time (found 2026-11-12)
 
 ## Log
 - 2026-11-12 T01 done. Spike ran a Debug build with a scratch layout (`CCTERM_LAYOUT_PATH`), a temporary Go-menu item calling `Pane.terminal?.sendKey`, and a spike folder whose `.claude/settings.json` forced a Bash prompt (the owner's `defaultMode: auto` approved `touch` with no prompt). Claude Code 2.1.322. Spike code dropped; `git status` clean; GATE green (74 tests in 18 suites).
@@ -494,3 +495,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
   - CPU, owner away from the keyboard (8/8 panes started on both builds, idle 60 s, then the T02 `top` command): M6 (186b88f) 18.2% (load 6.5-10.8), pre-M6 (f82e826) 13.5% (load 6.4-18.7). Difference +4.7 points, over the D9 budget of 1.0. Earlier pre-M6 runs in the same day read 16.1% and 18.8%, so run-to-run noise under this load is about 5 points; one pair cannot confirm or rule out a D9 breach.
   - CPU, 3 alternating pairs (owner asked for them; load 3.7-6.6, lower than before): pre-M6 15.6 / 15.2 / 15.8%, M6 16.5 / 16.6 / 16.3%. Means 15.5% vs 16.5%, +0.9 points, inside the D9 budget of 1.0 but with little margin. Pair 1's pre-M6 run started only 5 of 8 panes; without it the difference is still +0.95. The earlier single pair (+4.7) ran under load up to 18.7 and is treated as noise.
 - 2026-11-12 T08 done. Landing PR #10 `feat(app): transcript status in sidebar (M6)`, `feat/claude-code-features` -> `main`, open for the owner to merge as a merge commit: https://github.com/0xnicholasy/claude-code-terminal/pull/10. No earlier landing PR existed, so D6 did not apply. Checks run locally at 431c134: GATE 98 tests in 19 suites passed; Protocol `swift test` 7 passed; ccgovd `swift build && swift test` 26 tests in 8 suites passed. The body carries the T07 evidence (activity line 2.5 s / 2.8 s, ring 8% vs `/context` 9%, CPU +0.9 points over 3 pairs).
+- 2026-11-12 T09 done. New `Prompt.swift` (`PromptAnswer.keys`, `eligible` per D10, `canSend`), `Pane.send` (key path only, never `paste`), and `WorkspaceModel.answer(sessionId:toolUseId:allow:)`, which re-reads a fresh status through the injected `promptStatus` closure, checks the guard against the sidebar's `rows` state, sends through the injected `sendKey` closure, and sets `notice` on a refused or failed send. Tests: 5 in PromptTests (8 cases) and 8 new in WorkspaceTests. Mutations: removing each guard (`.blocked`, `hasProcess`, same id, one pending, excluded tools, allow/deny key, both notices, the fresh read) fails at least one test. GATE green (111 tests in 20 suites). Note for T10/T11: `promptStatus` defaults to nil, so `answer` refuses every prompt until T11 wires a fresh tail-parse in Bootstrap; a pane with a process but no `TerminalViewState` yet gets the "Could not send" notice. Review (sonnet): 1 Medium, recorded as a Backlog item rather than fixed (the guard cannot tell a prompt on screen from an approved tool still running for up to the 5 s state poll; no transcript signal is known yet). Lows fixed: the two notices are constants and the tests compare exact text. Not validated live; the live check is T12.
