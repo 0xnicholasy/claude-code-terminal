@@ -44,7 +44,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 ## Todos
 
 ### T01 Spike: send keys to a hidden pane and pin the prompt key mapping
-- status: done (#PR, 2026-11-12)
+- status: done (#2, 2026-11-12)
 - needs: none
 - size: S
 - scope: On a scratch stash, not committed:
