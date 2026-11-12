@@ -217,7 +217,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: GATE, then BUILD
 
 ### T11 Add Allow / Deny notification actions
-- status: done (#PRNUM, 2026-11-12)
+- status: done (#14, 2026-11-12)
 - needs: T09
 - size: M
 - scope:
