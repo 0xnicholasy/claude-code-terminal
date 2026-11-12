@@ -143,7 +143,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `TranscriptTests`, then GATE
 
 ### T06 Show activity line and context ring in the sidebar row
-- status: done (#PR, 2026-11-12)
+- status: done (#7, 2026-11-12)
 - needs: T05
 - size: M
 - scope: `SessionRow` gets the session's `TranscriptStatus?`, passed down from `SidebarView`.
