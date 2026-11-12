@@ -92,7 +92,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: `git -C /tmp/ct-wt-spike worktree list` shows the new worktree; `ls ~/.claude/projects/*/<id>.jsonl` finds the transcript
 
 ### T04 Add TranscriptStatus parser
-- status: done (#PR, 2026-11-12)
+- status: done (#5, 2026-11-12)
 - needs: T02
 - size: M
 - scope: New `Transcript.swift` with `struct TranscriptStatus: Equatable` and `static func parse(_ data: Data) -> TranscriptStatus`, using its own private `Decodable` line type. The fields T02 found are added there; `TranscriptReplies.Line` stays private and unchanged.
