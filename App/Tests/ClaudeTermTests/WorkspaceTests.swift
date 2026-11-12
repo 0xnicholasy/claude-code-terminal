@@ -1,5 +1,6 @@
 import CCProtocol
 import Foundation
+import GhosttyTerminal
 import Testing
 @testable import ClaudeTerm
 
@@ -137,5 +138,93 @@ struct WorkspaceTests {
         m.apply(sessions: [live])
         #expect(m.rows.contains { $0.sessionId == b && $0.ownedByApp })
         #expect(m.rows.count == 2)
+    }
+
+    // MARK: Answering prompts
+
+    /// A model with one launched pane `a`, a recorder for sent keys and a settable fresh status.
+    func promptModel(state: SessionState = .blocked, launch: Bool = true,
+                     status: TranscriptStatus? = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash")]),
+                     sendResult: Bool = true, sent: SentKeys) -> WorkspaceModel {
+        let m = WorkspaceModel(store: LayoutStore(url: scratchURL()), claudePath: { "/usr/bin/claude-fake" },
+                               promptStatus: { _ in status },
+                               sendKey: { pane, key in sent.keys.append((pane.id, key)); return sendResult })
+        m.open(SessionInfo(sessionId: a, cwd: "/w/a", kind: .hibernated, state: .hibernated))
+        if !launch { m.panes.first?.markExited() }
+        m.apply(sessions: [SessionInfo(sessionId: a, cwd: "/w/a", kind: .interactive, state: state)])
+        return m
+    }
+
+    final class SentKeys {
+        var keys: [(String, TerminalKey)] = []
+    }
+
+    @Test func answerSendsOneForAllowAndEscapeForDeny() {
+        let sent = SentKeys()
+        let m = promptModel(sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        m.answer(sessionId: a, toolUseId: "t1", allow: false)
+        #expect(sent.keys.map(\.1) == [.digit1, .escape])
+        #expect(sent.keys.allSatisfy { $0.0 == a })
+        #expect(m.notice == nil)
+    }
+
+    @Test func answerSendsNothingWhenNotBlocked() {
+        let sent = SentKeys()
+        let m = promptModel(state: .running, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerSendsNothingWhenThePendingToolChanged() {
+        let sent = SentKeys()
+        let m = promptModel(sent: sent)
+        m.answer(sessionId: a, toolUseId: "other", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerSendsNothingWithTwoPendingTools() {
+        let sent = SentKeys()
+        let two = TranscriptStatus(pending: [.init(id: "t1", name: "Bash", summary: "Bash"),
+                                             .init(id: "t2", name: "Edit", summary: "Edit")])
+        let m = promptModel(status: two, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerSendsNothingForAnExcludedTool() {
+        let sent = SentKeys()
+        let plan = TranscriptStatus(pending: [.init(id: "t1", name: "ExitPlanMode", summary: "plan")])
+        let m = promptModel(status: plan, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerSendsNothingForAPaneWithoutAProcess() {
+        let sent = SentKeys()
+        let m = promptModel(launch: false, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerSendsNothingWhenTheFreshStatusIsMissing() {
+        let sent = SentKeys()
+        let m = promptModel(status: nil, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.isEmpty)
+        #expect(m.notice == PromptAnswer.staleNotice)
+    }
+
+    @Test func answerReportsAFailedKeySend() {
+        let sent = SentKeys()
+        let m = promptModel(sendResult: false, sent: sent)
+        m.answer(sessionId: a, toolUseId: "t1", allow: true)
+        #expect(sent.keys.count == 1)
+        #expect(m.notice == PromptAnswer.failedSendNotice)
     }
 }
