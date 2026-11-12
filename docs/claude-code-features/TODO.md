@@ -123,7 +123,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `TranscriptTests`, then GATE
 
 ### T05 Add TranscriptStatusModel polling open panes
-- status: done (#PR, 2026-11-12)
+- status: done (#6, 2026-11-12)
 - needs: T04
 - size: M
 - scope: `@MainActor final class TranscriptStatusModel: ObservableObject` in `Transcript.swift`, publishing `statuses: [String: TranscriptStatus]` keyed by session id.
