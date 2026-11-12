@@ -189,7 +189,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: GATE; `cd <working copy>/Protocol && swift test`; `cd <working copy>/ccgovd && swift build && swift test`; `gh pr view feat/claude-code-features --json state,url,baseRefName`
 
 ### T09 Add prompt answering with a stale-prompt guard
-- status: done (#PRNUM, 2026-11-12)
+- status: done (#12, 2026-11-12)
 - needs: T01, T05
 - size: M
 - scope: New `Prompt.swift` with `enum PromptAnswer`:
