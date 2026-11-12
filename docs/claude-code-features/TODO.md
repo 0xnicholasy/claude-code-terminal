@@ -2,7 +2,7 @@
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
 Status: ACTIVE
-Progress: 0/25 done
+Progress: 1/25 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -32,7 +32,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - D4 Each milestone ends with a live-check todo, with screenshots of the running app for UI checks. (owner, 2026-11-12)
 - D5 The branch was cut from `origin/main` at `fc9999a` (v0.1.12). The uncommitted Usage/SessionSource edits in the main checkout are a separate change and out of scope; `main` is merged into the feature branch per `/implement` step 2 when it moves. (orchestrator, 2026-11-12)
 - D6 If an earlier milestone's PR is still unmerged when the next landing todo runs, that todo comments on the open PR (listing the new milestone) instead of opening a second one. | assumed, confirm by T08
-- D7 Claude Code 2.1.322 permission prompt: `1` (`TerminalKey.digit1`) approves once and Esc (`TerminalKey.escape`) denies. | assumed, confirm by T01
+- D7 Claude Code 2.1.322 permission prompt: `1` (`TerminalKey.digit1`) approves once and Esc (`TerminalKey.escape`) denies. | confirmed by T01 (2026-11-12)
 - D8 The app passes no model flag at launch (`ClaudeCommand.swift:27-33`), so the 1M window must be detected from the transcript. If no field marks it, fall back to 1M once context tokens exceed 200K. | assumed, confirm by T02
 - D9 CPU budget: with 8 idle open panes, M6 may add at most 1.0 percentage point to the app's average CPU over 60 s. | assumed, confirm by T07
 - D10 Allow/Deny is offered only when the transcript has exactly one pending main-thread `tool_use` and its tool is not `AskUserQuestion`, `ExitPlanMode`, `Task` or `Agent`. Those have other menus, or the prompt belongs to a subagent. | assumed, confirm by T12
@@ -44,7 +44,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 ## Todos
 
 ### T01 Spike: send keys to a hidden pane and pin the prompt key mapping
-- status: todo
+- status: done (#2, 2026-11-12)
 - needs: none
 - size: S
 - scope: On a scratch stash, not committed:
@@ -435,3 +435,8 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - Worktree cleanup from the app (excluded by D2; stays with `git-worktree-clean`)
 
 ## Log
+- 2026-11-12 T01 done. Spike ran a Debug build with a scratch layout (`CCTERM_LAYOUT_PATH`), a temporary Go-menu item calling `Pane.terminal?.sendKey`, and a spike folder whose `.claude/settings.json` forced a Bash prompt (the owner's `defaultMode: auto` approved `touch` with no prompt). Claude Code 2.1.322. Spike code dropped; `git status` clean; GATE green (74 tests in 18 suites).
+  - (a) Yes. A hidden pane (`isSurfaceVisible = false`) keeps its surface: `sendKey` returned true for `1`, Esc and `2`, and each key reached claude.
+  - (b) `1` approves once (`touch /tmp/ct-spike` ran; tool_result "(Bash completed with no output)"). Esc denies (tool_result "The user doesn't want to proceed with this tool use..." then "[Request interrupted by user for tool use]"). `2` depends on the menu: with no `ask` rule it approved (file created; no `settings.local.json` written, so session-scoped). With an `ask` rule matching the command it rejected, because that menu has no "don't ask again" option and `2` is No. The app must never send `2`. D7 confirmed.
+  - (c) Yes. The assistant line with the pending `tool_use` (`"name":"Bash","input":{"command":"touch /tmp/ct-spike"...}`) is the last message line in the jsonl while the prompt is on screen, with no matching `tool_result` yet.
+  - (d) Yes. After relaunch, the saved-selected pane has `hasProcess=true`; the other restored pane has `hasProcess=false`, `terminal=nil`, and `sendKey` on it returned false. So it gets no buttons.
