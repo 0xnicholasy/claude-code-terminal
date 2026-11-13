@@ -110,6 +110,8 @@ struct NavigationCommands: Commands {
                 .keyboardShortcut("1", modifiers: [.command, .control])
             Button("Usage") { model.tab = .usage }
                 .keyboardShortcut("2", modifiers: [.command, .control])
+            Button("Config") { model.tab = .config }
+                .keyboardShortcut("3", modifiers: [.command, .control])
             Button("Toggle Sessions / Usage") { model.tab = model.tab == .usage ? .sessions : .usage }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
             Divider()
@@ -167,6 +169,12 @@ enum Bootstrap {
         if isUnderTest { return UsageModel() }
         let binary = claude
         return UsageModel(claudePath: { binary.get() }, defaults: .standard)
+    }
+
+    static func makeMcp() -> McpListModel {
+        if isUnderTest { return McpListModel(claudePath: { nil }) }
+        let binary = claude
+        return McpListModel(claudePath: { binary.get() })
     }
 
     static func makeTranscripts() -> TranscriptStatusModel { TranscriptStatusModel() }
