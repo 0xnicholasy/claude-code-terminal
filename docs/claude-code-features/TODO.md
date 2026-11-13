@@ -1,8 +1,8 @@
 # Claude Code features, round 2
 
 ultraplan: claude-code-features | branch: feat/claude-code-features | base: main | tag: pre-claude-code-features-main | created: 2026-11-12
-Status: ACTIVE
-Progress: 26/27 done
+Status: COMPLETE 2026-11-14, kept as backlog
+Progress: 27/27 done
 
 ## Goal
 Make the ClaudeTerm sidebar show what each open session is doing and how full its context is (M6). Let the user answer a permission prompt from the sidebar or from the macOS notification without focusing the pane (M7). Cmd-Shift-T starts a session in a new git worktree (M8). A read-only Config tab lists MCP servers, skills, agents and hooks for the selected project (M9).
@@ -453,7 +453,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: GATE; `cd <working copy>/Protocol && swift test`; `cd <working copy>/ccgovd && swift build && swift test`; `gh pr view feat/claude-code-features --json state,url`
 
 ### TZZ Cleanup and land
-- status: todo
+- status: done
 - needs: every other todo
 - scope: run `/implement cleanup`
 - done when: skill removed from the branch, TODO.md archived, landing PR into main open and approved by the owner
@@ -547,3 +547,4 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - 2026-11-13 T19 done. Landing PR #10 still open, so per D6 M8 was added by comment: https://github.com/0xnicholasy/claude-code-terminal/pull/10#issuecomment-6843625240. The comment lists #18-#21 and #25 and the five T18 live results. Checks run locally at 6f5e532: GATE 157 tests in 21 suites passed; Protocol `swift test` 7 passed; ccgovd `swift build && swift test` 26 tests in 8 suites passed. `gh pr view feat/claude-code-features`: OPEN.
 - 2026-11-13 T23 done (live, BUILD app, pane on `~/Desktop/claude-projects/claude-code-terminal`, driven by computer use). Opening Config showed MCP "Not checked yet": the tab does not run `claude mcp list` on open (T22 deviation holds). After Check, the tab's MCP rows equal the shell `claude mcp list` run in that repo, in the same order: shell `claude.ai Claude Docs, claude.ai Vercel, claude.ai Slack, claude.ai Linear, claude.ai Gmail, claude.ai Google Drive, claude.ai Google Calendar, plugin:vercel:vercel (needs auth), github, linear (needs auth), jev-browser, discord, lcu` / tab the same 13 names with the same statuses, scope `plugin` on `plugin:vercel:vercel`, `user` on the 5 `~/.claude.json` servers, none on the 7 connectors (D12). Rows show name, status and scope only; no command, argument, URL or env value is visible. Skills 152 (57 user, 95 plugin) = 57 `~/.claude/skills/*/SKILL.md` + 95 installed plugin skills (D13); agents 20 = `~/.claude/agents/*.md`; hooks 31 = the hook entries in `~/.claude/settings.json`; the repo has no project skills, agents, hooks or `.mcp.json`, so the unapproved-project-server security question could not be exercised here. `rg -n '\.env'` on Config.swift and ConfigView.swift: only Config.swift lines 23, 188, 191 (the guard and its doc comments). D14 partly confirmed (see D14). `build/live-m9.png` saved by `screencapture -x` with ClaudeTerm brought to the front for about 2 s; it shows the MCP section and the first skills.
 - 2026-11-13 T24 done. Landing PR #10 still open, so per D6 M9 was added by comment: https://github.com/0xnicholasy/claude-code-terminal/pull/10#issuecomment-6858120112. The comment lists #22-#24 and #27 and the T23 live results. Checks run locally at d91c795: GATE 157 tests in 21 suites passed; Protocol `swift test` 7 passed; ccgovd `swift build && swift test` 26 tests in 8 suites passed. `gh pr view feat/claude-code-features`: OPEN.
+- 2026-11-14 TZZ done. `.claude/skills/implement` removed; no `CLAUDE.md`, CI or deploy-doc reference to `feat/claude-code-features` existed outside `docs/claude-code-features/` (`git grep` empty). GATE green before the cleanup PR. Landing PR #10 (`feat/claude-code-features` into `main`, merge commit) stays open for the owner to merge; its description now covers M6-M9. Tag `pre-claude-code-features-main` is kept until the owner merges.
