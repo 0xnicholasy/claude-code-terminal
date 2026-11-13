@@ -397,7 +397,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `ConfigTests`; GATE
 
 ### T21 Add cached `claude mcp list` reader
-- status: done (#PRNUM, 2026-11-13)
+- status: done (#23, 2026-11-13)
 - needs: T20
 - size: M
 - scope:
