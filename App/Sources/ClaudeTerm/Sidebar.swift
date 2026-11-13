@@ -30,7 +30,7 @@ enum SidebarLayout {
     /// or closes, and the Cmd-number badges read 1, 2, 3 from top to bottom.
     static func projects(_ rows: [SessionInfo], paneOrder: [String]) -> SidebarProjects {
         let rank = Dictionary(paneOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
-        let built = Dictionary(grouping: rows, by: \.cwd).map { path, list in
+        let built = Dictionary(grouping: rows, by: { projectKey($0.cwd) }).map { path, list in
             SidebarProject(path: path, name: projectName(path),
                            sessions: list.sorted { before($0, $1, rank: rank) },
                            isOpen: list.contains { rank[$0.sessionId] != nil })
@@ -60,6 +60,12 @@ enum SidebarLayout {
         }
     }
 
+    /// The folder a session is grouped under: the parent repo for a `claude -w` worktree session,
+    /// else its own folder.
+    static func projectKey(_ cwd: String) -> String {
+        Worktree.parentRepo(of: cwd) ?? cwd
+    }
+
     static func projectName(_ path: String) -> String {
         path.isEmpty ? "Unknown" : (path as NSString).lastPathComponent
     }
@@ -67,9 +73,11 @@ enum SidebarLayout {
 
 /// Keeps a project's panes next to each other, so pane order (Cmd-1 to Cmd-9) matches the sidebar.
 enum PaneOrder {
-    /// Where a new pane in `cwd` goes: right after the last pane of the same project, else at the end.
+    /// Where a new pane in `cwd` goes: right after the last pane of the same project (a worktree
+    /// counts as its parent repo, as in the sidebar), else at the end.
     static func insertionIndex(cwds: [String], cwd: String) -> Int {
-        cwds.lastIndex(of: cwd).map { $0 + 1 } ?? cwds.count
+        let key = SidebarLayout.projectKey(cwd)
+        return cwds.lastIndex { SidebarLayout.projectKey($0) == key }.map { $0 + 1 } ?? cwds.count
     }
 
     /// Stable regroup for layouts saved before panes were kept together: each project's panes move

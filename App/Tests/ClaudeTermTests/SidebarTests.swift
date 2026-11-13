@@ -47,6 +47,58 @@ struct SidebarTests {
             == ["x1", "x2", "y1", "y2", "z1"])
     }
 
+    // MARK: Worktree sessions (T17)
+
+    let wt = "/w/repo/.claude/worktrees/feat-1"
+
+    @Test func worktreeSessionSitsInItsParentsGroup() {
+        let rows = [s(a, "/w/repo", "main chat", .idle), s(b, wt + "/src", "wt chat", .idle), s(c, "/w/other", "o", .idle)]
+        let layout = SidebarLayout.projects(rows, paneOrder: [])
+        #expect(layout.other.map(\.name) == ["other", "repo"])
+        #expect(layout.other[1].path == "/w/repo")
+        #expect(Set(layout.other[1].sessions.map(\.sessionId)) == [a, b])
+        #expect(Worktree.branch(of: wt + "/src") == "worktree-feat-1")
+        #expect(Worktree.root(of: wt + "/src") == wt)
+        #expect(Worktree.branch(of: "/w/repo") == nil)
+    }
+
+    @Test func openWorktreePaneOpensTheParentProject() {
+        let rows = [s(a, "/w/repo", "main chat", .hibernated, kind: .hibernated), s(b, wt, "wt chat", .idle, owned: true),
+                    s(c, "/w/alpha", "a", .idle)]
+        let layout = SidebarLayout.projects(rows, paneOrder: [b])
+        #expect(layout.open.map(\.path) == ["/w/repo"])
+        #expect(layout.open[0].sessions.map(\.sessionId) == [b, a])
+        #expect(layout.other.map(\.name) == ["alpha"])
+    }
+
+    @Test func paneOrderFollowsSidebarOrderWithAWorktreePaneMixedIn() {
+        // Panes: repo, other. A new worktree pane of repo goes after repo's pane, before other.
+        let cwds = ["/w/repo", "/w/other"]
+        let idx = PaneOrder.insertionIndex(cwds: cwds, cwd: wt)
+        #expect(idx == 1)
+        var order = [a, c]
+        order.insert(b, at: idx)
+        // A new plain pane of repo goes after the worktree pane too.
+        #expect(PaneOrder.insertionIndex(cwds: ["/w/repo", wt, "/w/other"], cwd: "/w/repo") == 2)
+        // A saved layout with the worktree pane last regroups next to its repo.
+        #expect(PaneOrder.grouped(["/w/repo", "/w/other", wt], key: SidebarLayout.projectKey) == ["/w/repo", wt, "/w/other"])
+
+        let rows = [s(a, "/w/repo", "r", .idle, owned: true), s(b, wt, "w", .idle, owned: true), s(c, "/w/other", "o", .idle, owned: true)]
+        #expect(SidebarLayout.order(rows, paneOrder: order).map(\.sessionId) == order)
+    }
+
+    @Test func restoreRegroupsAWorktreePaneNextToItsRepo() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ccterm-test/\(UUID().uuidString)/layout.json")
+        try LayoutStore(url: url).save(LayoutFile(windows: [WindowRecord(panes: [
+            PaneRecord(sessionId: a, cwd: "/w/repo", title: "r"), PaneRecord(sessionId: c, cwd: "/w/other", title: "o"),
+            PaneRecord(sessionId: b, cwd: wt, title: "w"),
+        ], selected: nil, frame: nil)]))
+        let m = WorkspaceModel(store: LayoutStore(url: url), claudePath: { nil })
+        m.restore()
+        #expect(m.panes.map(\.id) == [a, b, c])
+        #expect(m.paneShortcut(b) == Shortcuts.pane(index: 1, count: 3))
+    }
+
     @Test func waitingIsAnnouncedOnceAndNotForPromptsSeenAtLaunch() {
         var t = WaitingTracker()
         // Already waiting at the first update: recorded, not announced.

@@ -355,6 +355,13 @@ struct SessionRow: View {
                         if session.pinned {
                             Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(Palette.textTertiary)
                         }
+                        if let branch = Worktree.branch(of: session.cwd) {
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                                .labelStyle(.titleAndIcon)
+                                .font(.system(size: 10))
+                                .foregroundStyle(Palette.textTertiary)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
                     }
                     if isWaiting, let tool = answerable, let label = PromptAnswer.label(tool, cwd: session.cwd) {
                         PromptButtons(label: label) { allow in
@@ -551,6 +558,12 @@ struct RowMenu: View {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.cwd)])
         }
         .disabled(session.cwd.isEmpty)
+        if let worktree = Worktree.root(of: session.cwd) {
+            // D2: the app never deletes a worktree; there is no remove action here.
+            Button("Reveal Worktree") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: worktree)])
+            }
+        }
         Button("Copy Resume Command") {
             guard let line = model.resumeCommandLine(session) else { return }
             NSPasteboard.general.clearContents()
