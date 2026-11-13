@@ -44,6 +44,50 @@ struct LaunchTests {
         }
     }
 
+    @Test func worktreeFlagFollowsSessionId() throws {
+        let spec = try ClaudeCommand.newSession(id: id, cwd: "/repo", executable: "/usr/bin/claude", worktree: "feat-a.b_c")
+        #expect(spec.arguments == ["--session-id", id, "-w", "feat-a.b_c"])
+        #expect(spec.ghosttyCommand == "/usr/bin/claude --session-id \(id) -w feat-a.b_c")
+        #expect(try ClaudeCommand.newSession(id: id, cwd: "/repo", executable: "/usr/bin/claude").arguments == ["--session-id", id])
+    }
+
+    @Test func rejectsWorktreeNamesThatAreNotShellInert() {
+        let bad = ["", "a b", "a$b", "$(x)", "a;b", "-x", ".hidden", "..", "a/b", "a..b", "a.", "a.lock", "a`b`", "a'b", "a*", "a~", "\u{e9}",
+                   String(repeating: "a", count: 65)]
+        for name in bad {
+            #expect(!Worktree.isValidName(name), "\(name)")
+            #expect(throws: LaunchError.invalidWorktreeName) {
+                try ClaudeCommand.newSession(id: id, cwd: "/repo", executable: "/usr/bin/claude", worktree: name)
+            }
+        }
+        #expect(Worktree.isValidName(String(repeating: "a", count: 64)))
+        #expect(Worktree.isValidName("a.b"))
+    }
+
+    @Test func defaultNameIsValidForAnyProjectName() {
+        let date = Date(timeIntervalSince1970: 1_794_602_400) // 2026-11-13 20:40 UTC
+        let utc = TimeZone(identifier: "UTC")!
+        #expect(Worktree.defaultName(project: "My Project (2)", date: date, timeZone: utc) == "My-Project-2-261113-2040")
+        #expect(Worktree.defaultName(project: "--.x", date: date, timeZone: utc) == "x-261113-2040")
+        #expect(Worktree.defaultName(project: "$$$", date: date, timeZone: utc) == "session-261113-2040")
+        #expect(Worktree.defaultName(project: "my..proj.", date: date, timeZone: utc) == "my.proj-261113-2040")
+        for project in ["My Project (2)", "", "...", String(repeating: "long name ", count: 20), "caf\u{e9} $(x)"] {
+            #expect(Worktree.isValidName(Worktree.defaultName(project: project, date: date)), "\(project)")
+        }
+    }
+
+    @Test func parentRepoMapsWorktreePathsBack() {
+        let wt = Worktree.path(repo: "/Users/u/code/app", name: "feat-1")
+        #expect(wt == "/Users/u/code/app/.claude/worktrees/feat-1")
+        #expect(Worktree.parentRepo(of: wt) == "/Users/u/code/app")
+        #expect(Worktree.parentRepo(of: wt + "/sub/dir") == "/Users/u/code/app")
+        #expect(Worktree.parentRepo(of: "/Users/u/code/app/.claude/worktrees/a+b/src") == "/Users/u/code/app")
+        #expect(Worktree.parentRepo(of: "/Users/u/code/app/.claude/worktrees/../x") == nil)
+        #expect(Worktree.parentRepo(of: "/Users/u/code/app") == nil)
+        #expect(Worktree.parentRepo(of: "/Users/u/code/app/.claude/worktrees/") == nil)
+        #expect(Worktree.parentRepo(of: "/Users/u/code/app/.claude/agents") == nil)
+    }
+
     @Test func locatorPrefersEnvOverrideThenShellThenLocalBin() {
         func loc(env: [String: String], shell: String?, exec: Set<String>) -> String? {
             ClaudeLocator(environment: env, home: "/h", shellLookup: { shell }, isExecutable: { exec.contains($0) }).resolve()
