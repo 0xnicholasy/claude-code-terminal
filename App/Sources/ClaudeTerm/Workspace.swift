@@ -57,7 +57,7 @@ final class Pane: ObservableObject, Identifiable {
     /// Names as `ghostty +list-keybinds --default` prints them (Ghostty 1.x).
     static let unboundKeys = ["super+q", "super+n", "super+shift+w", "ctrl+tab", "ctrl+shift+tab",
                               "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down",
-                              "super+shift+v", "super+shift+m"]
+                              "super+shift+v", "super+shift+m", "super+shift+t"]
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
     /// Warm palette matching the window chrome (`Palette.main`), after the Claude desktop app. Theme
     /// commands are applied after the builder's, so colours set in the builder would be overwritten.

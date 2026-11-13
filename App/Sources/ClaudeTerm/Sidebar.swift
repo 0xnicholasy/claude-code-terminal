@@ -209,6 +209,7 @@ enum Shortcuts {
 
     static let newSession = cmd + "N"
     static let newInProject = shift + cmd + "N"
+    static let newWorktree = shift + cmd + "T"
     static let closePane = shift + cmd + "W"
     static let nextPane = shift + cmd + "]"
     static let previousPane = shift + cmd + "["

@@ -10,11 +10,18 @@ struct ClaudeTermApp: App {
     @StateObject private var clipboard = ClipboardModel()
     @StateObject private var updates = UpdateModel()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
+    @State private var worktreeRequest: WorktreeSheet.Request?
 
     var body: some Scene {
         Window("ClaudeTerm", id: "main") {
             ContentView(model: model, usage: usage, clipboard: clipboard, transcripts: transcripts)
                 .frame(minWidth: 760, minHeight: 480)
+                .sheet(item: $worktreeRequest) { req in
+                    WorktreeSheet(request: req) { name in
+                        Task { await model.newWorktreeSession(from: req.cwd, name: name) }
+                    }
+                    .id(req.id) // a request for another folder starts with a fresh default name
+                }
                 .task {
                     Bootstrap.start(model)
                     guard !Bootstrap.isUnderTest else { return }
@@ -41,6 +48,21 @@ struct ClaudeTermApp: App {
                 Button("New Session in This Project") { model.newSessionInCurrentProject() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(model.selectedID == nil)
+                Button("New Session in Worktree...") {
+                    guard let cwd = model.selectedSession?.cwd, !cwd.isEmpty else {
+                        model.notice = "Select a pane first: the worktree is made from its project."
+                        return
+                    }
+                    Task {
+                        guard let top = await WorkspaceModel.gitTopLevel(cwd) else {
+                            model.notice = "Not a git repository: \(cwd)"
+                            return
+                        }
+                        worktreeRequest = WorktreeSheet.Request(cwd: cwd, topLevel: top)
+                    }
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(model.selectedID == nil || worktreeRequest != nil)
             }
             CommandGroup(after: .newItem) {
                 Button("Close Pane") {
