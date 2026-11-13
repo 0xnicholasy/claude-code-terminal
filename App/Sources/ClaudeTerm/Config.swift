@@ -349,7 +349,8 @@ enum McpList {
 }
 
 /// `claude mcp list` per project, cached by project path. It starts every server for a health
-/// check, so it runs only when asked: on first view of a project, and on Refresh.
+/// check, including servers from the project's `.mcp.json`, so it runs only when the user clicks
+/// Check or Refresh in the Config tab, never when the tab opens.
 @MainActor
 final class McpListModel: ObservableObject {
     enum State: Equatable {

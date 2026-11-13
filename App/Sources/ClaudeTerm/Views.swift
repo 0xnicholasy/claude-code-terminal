@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 enum DetailTab: String, CaseIterable, Identifiable {
     case sessions = "Sessions"
     case usage = "Usage"
+    case config = "Config"
     var id: String { rawValue }
 }
 
@@ -17,6 +18,7 @@ struct ContentView: View {
     @ObservedObject var transcripts: TranscriptStatusModel
     @StateObject private var git = GitStatusModel()
     @StateObject private var replies = RepliesModel()
+    @StateObject private var mcp = Bootstrap.makeMcp()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
 
     var body: some View {
@@ -25,13 +27,17 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300)
         } detail: {
             ZStack {
-                // Panes stay mounted under the Usage tab so their terminals keep running untouched.
+                // Panes stay mounted under the Usage and Config tabs so their terminals keep running untouched.
                 VStack(spacing: 0) {
                     PaneArea(model: model, replies: showReplies && model.selectedID != nil ? replies : nil)
                     if let session = model.selectedSession { PaneStatusStrip(session: session, model: model) }
                 }
                 if model.tab == .usage {
                     UsageView(usage: usage, knownPaths: model.rows.map(\.cwd)).background(Palette.main)
+                } else if model.tab == .config {
+                    ConfigView(project: model.selectedSession?.cwd, mcp: mcp)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Palette.main)
                 }
             }
             .background(Palette.main)
@@ -51,6 +57,7 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 TabSwitcher(tab: $model.tab)
                     .help([Shortcuts.hint("Sessions", Shortcuts.sessionsTab), Shortcuts.hint("Usage", Shortcuts.usageTab),
+                           Shortcuts.hint("Config", Shortcuts.configTab),
                            Shortcuts.hint("Switch", Shortcuts.toggleTab)].joined(separator: "\n"))
             }
             .plainBackground()
@@ -102,7 +109,7 @@ extension ToolbarContent {
     }
 }
 
-/// Sessions / Usage switch drawn as two flat text tabs instead of a segmented control.
+/// Sessions / Usage / Config switch drawn as two flat text tabs instead of a segmented control.
 struct TabSwitcher: View {
     @Binding var tab: DetailTab
 

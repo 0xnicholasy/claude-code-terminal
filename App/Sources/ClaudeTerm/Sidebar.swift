@@ -223,6 +223,7 @@ enum Shortcuts {
     static let previousPane = shift + cmd + "["
     static let sessionsTab = control + cmd + "1"
     static let usageTab = control + cmd + "2"
+    static let configTab = control + cmd + "3"
     static let toggleTab = shift + cmd + "U"
     static let nextSession = option + cmd + "\u{2193}"
     static let previousSession = option + cmd + "\u{2191}"
