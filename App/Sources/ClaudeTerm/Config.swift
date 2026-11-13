@@ -275,9 +275,19 @@ enum McpList {
 
     /// Server names in `<project>/.mcp.json`, sorted. Check asks before running when this is not
     /// empty, because `claude mcp list` starts these servers too.
+    /// Fails closed: a `.mcp.json` that exists (even a broken symlink) but cannot be read or parsed
+    /// still asks, as one placeholder entry.
     static func projectServers(project: String) -> [String] {
-        serverNames(project + "/.mcp.json").sorted()
+        let path = project + "/.mcp.json"
+        guard (try? FileManager.default.attributesOfItem(atPath: path)) != nil else { return [] }
+        guard let text = ConfigScanner.read(path),
+              let names = try? JSONDecoder().decode(Names.self, from: Data(text.utf8)) else {
+            return [unreadableMcpJson]
+        }
+        return (names.mcpServers ?? [:]).keys.sorted()
     }
+
+    static let unreadableMcpJson = "an .mcp.json that could not be read"
 
     static func serverNames(_ path: String) -> Set<String> {
         guard let text = ConfigScanner.read(path),
