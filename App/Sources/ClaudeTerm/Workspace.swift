@@ -151,6 +151,10 @@ final class WorkspaceModel: ObservableObject {
     /// The git top-level folder for a path, or nil outside a repo (`git rev-parse --show-toplevel`
     /// off the main thread in the app, a fake in tests).
     private let repoRoot: @Sendable (String) async -> String?
+    /// Whether claude saved a transcript for a session id. A pane whose session never got a message
+    /// has none, and `claude --resume` on it fails with "No conversation found", so restore starts it
+    /// as a new session with the same id instead.
+    private let hasTranscript: (String) -> Bool
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
@@ -162,8 +166,10 @@ final class WorkspaceModel: ObservableObject {
          attention: @escaping (WaitingChange, Int) -> Void = { _, _ in },
          promptStatus: @escaping (String) -> TranscriptStatus? = { _ in nil },
          sendKey: @escaping (Pane, TerminalKey) -> Bool = { $0.send($1) },
-         repoRoot: @escaping @Sendable (String) async -> String? = { await WorkspaceModel.gitTopLevel($0) }) {
+         repoRoot: @escaping @Sendable (String) async -> String? = { await WorkspaceModel.gitTopLevel($0) },
+         hasTranscript: @escaping (String) -> Bool = { _ in true }) {
         self.repoRoot = repoRoot
+        self.hasTranscript = hasTranscript
         self.paneProcess = paneProcess
         self.attention = attention
         self.promptStatus = promptStatus
@@ -471,7 +477,8 @@ final class WorkspaceModel: ObservableObject {
             guard let window = layout.windows.first else { return }
             panes = PaneOrder.grouped(window.panes.compactMap { rec in
                 guard SessionID.isValid(rec.sessionId) else { return nil }
-                return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title, origin: .resume)
+                return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title,
+                                origin: hasTranscript(rec.sessionId) ? .resume : .new)
             }, key: { SidebarLayout.projectKey($0.cwd) })
             windowFrameForRestore = window.frame
             windowFrame = window.frame // set before select() persists, so the saved frame is not overwritten with nil

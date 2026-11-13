@@ -64,6 +64,25 @@ struct WorkspaceTests {
         #expect(m.panes.first { $0.id == b }?.launched?.cwd == "/w/b")
     }
 
+    @Test func restoredPaneWithNoTranscriptStartsAsANewSessionWithTheSameId() throws {
+        let url = scratchURL()
+        try LayoutStore(url: url).save(LayoutFile(windows: [WindowRecord(
+            panes: [PaneRecord(sessionId: a, cwd: "/w/a", title: "A"),
+                    PaneRecord(sessionId: b, cwd: "/w/b", title: "B")],
+            selected: nil, frame: nil)]))
+        let used = a
+        let m = WorkspaceModel(store: LayoutStore(url: url), claudePath: { "/usr/bin/claude-fake" },
+                               hasTranscript: { $0 == used })
+        m.restore()
+
+        m.select(a)
+        m.select(b)
+        #expect(m.panes.first { $0.id == a }?.launched?.arguments == ["--resume", a])
+        // A session that never got a message has no transcript; `--resume` on it fails.
+        #expect(m.panes.first { $0.id == b }?.launched?.arguments == ["--session-id", b])
+        #expect(m.panes.first { $0.id == b }?.launched?.cwd == "/w/b")
+    }
+
     @Test func restoreKeepsTheSavedWindowFrameOnDisk() throws {
         let url = scratchURL()
         let frame = LayoutFrame(x: 10, y: 20, width: 1000, height: 640)

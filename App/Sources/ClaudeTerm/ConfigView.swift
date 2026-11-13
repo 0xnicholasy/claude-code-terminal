@@ -8,6 +8,8 @@ struct ConfigView: View {
     @ObservedObject var mcp: McpListModel
     /// nil while the scan runs, so the sections read "Scanning", not "None".
     @State private var items: [ConfigItem]?
+    /// Project `.mcp.json` server names awaiting the user's OK before Check starts them.
+    @State private var confirmServers: [String] = []
 
     var body: some View {
         if let project {
@@ -51,7 +53,23 @@ struct ConfigView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Button(state == nil ? "Check" : "Refresh") {
-                        Task { await mcp.load(project: project, force: true) }
+                        let names = McpList.projectServers(project: project)
+                        if names.isEmpty {
+                            Task { await mcp.load(project: project, force: true) }
+                        } else {
+                            confirmServers = names
+                        }
+                    }
+                    .confirmationDialog("Start this project's MCP servers?",
+                                        isPresented: Binding(get: { !confirmServers.isEmpty },
+                                                             set: { if !$0 { confirmServers = [] } })) {
+                        Button("Check") {
+                            confirmServers = []
+                            Task { await mcp.load(project: project, force: true) }
+                        }
+                        Button("Cancel", role: .cancel) { confirmServers = [] }
+                    } message: {
+                        Text("Checking runs claude mcp list, which starts every server, including these from the project's .mcp.json: \(confirmServers.joined(separator: ", ")).")
                     }
                     .controlSize(.small)
                     .help("Runs claude mcp list in this project. It starts each server to check its health.")
