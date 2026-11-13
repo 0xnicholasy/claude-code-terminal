@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Name and path rules for sessions started with `claude -w <name>` (T03, Claude Code 2.1.322):
 /// the worktree goes to `<repo>/.claude/worktrees/<name>` on branch `worktree-<name>`, and the
@@ -56,5 +57,64 @@ enum Worktree {
         let name = cwd[range.upperBound...].split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         guard repo.hasPrefix("/"), !name.isEmpty, name != ".", name != ".." else { return nil }
         return repo
+    }
+}
+
+/// Cmd-Shift-T: names the worktree for a new session in the selected pane's repo.
+struct WorktreeSheet: View {
+    /// What the sheet was opened for: the selected session's folder and its git top level (resolved
+    /// before the sheet opens, so a pane in a repo subfolder still names the repo).
+    struct Request: Identifiable {
+        let cwd: String
+        let topLevel: String
+        var id: String { cwd }
+
+        /// The repo folder name, also for a session that already runs in a worktree.
+        var project: String { ((Worktree.parentRepo(of: topLevel) ?? topLevel) as NSString).lastPathComponent }
+    }
+
+    let request: Request
+    let create: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+
+    init(request: Request, create: @escaping (String) -> Void) {
+        self.request = request
+        self.create = create
+        _name = State(initialValue: Worktree.defaultName(project: request.project, date: Date()))
+    }
+
+    private var isValid: Bool { Worktree.isValidName(name) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("New Session in Worktree").font(.headline)
+            Text("A new git worktree of \(request.project), in .claude/worktrees.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextField("Worktree name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 320)
+                .onSubmit { submit() }
+            Text("Letters, digits, dots, dashes and underscores; at most \(Worktree.maxNameLength); not starting with a dot or dash.")
+                .font(.caption)
+                .foregroundStyle(isValid ? Color.secondary : Color.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 320, alignment: .leading)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Create") { submit() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!isValid)
+            }
+        }
+        .padding(20)
+    }
+
+    private func submit() {
+        guard isValid else { return }
+        create(name)
+        dismiss()
     }
 }
