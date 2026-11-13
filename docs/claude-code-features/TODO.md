@@ -371,7 +371,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: GATE; `cd <working copy>/Protocol && swift test`; `cd <working copy>/ccgovd && swift build && swift test`; `gh pr view feat/claude-code-features --json state,url`
 
 ### T20 Add config scanners for skills, agents and hooks
-- status: done (#PRNUM, 2026-11-13)
+- status: done (#22, 2026-11-13)
 - needs: none
 - size: M
 - scope: New `Config.swift` with `enum ConfigScanner` (pure, home and project paths injected):
