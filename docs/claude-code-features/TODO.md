@@ -317,7 +317,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `WorkspaceTests`; GATE
 
 ### T16 Add Cmd-Shift-T new-worktree sheet
-- status: done (#PRNUM, 2026-11-13)
+- status: done (#20, 2026-11-13)
 - needs: T15, T11
 - size: S
 - scope:
