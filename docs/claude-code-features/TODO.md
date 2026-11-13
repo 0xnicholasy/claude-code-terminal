@@ -298,7 +298,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `LaunchTests`; GATE
 
 ### T15 Open a pane in a new worktree
-- status: done (#PRNUM, 2026-11-13)
+- status: done (#19, 2026-11-13)
 - needs: T14, T09
 - size: M
 - scope:
