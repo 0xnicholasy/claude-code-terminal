@@ -362,7 +362,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: BUILD; `git worktree list` in the repo; `screencapture -x <working copy>/build/live-m8.png`
 
 ### T19 Land M8
-- status: done (#PR, 2026-11-13)
+- status: done (#26, 2026-11-13)
 - needs: T18
 - size: S
 - scope: Push, then open the PR `feat(app): new session in a worktree (M8)`, or comment on the open PR per D6.
