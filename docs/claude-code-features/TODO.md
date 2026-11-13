@@ -269,7 +269,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: BUILD; `test -e /tmp/ct-m7-allow && ! test -e /tmp/ct-m7-deny && echo PASS`; `screencapture -x <working copy>/build/live-m7.png`
 
 ### T13 Land M7
-- status: done (#PRNUM, 2026-11-13)
+- status: done (#17, 2026-11-13)
 - needs: T12
 - size: S
 - scope: Push, then open the PR `feat(app): answer permission prompts inline (M7)`, or comment on the open PR per D6. Merge commit by the owner.
