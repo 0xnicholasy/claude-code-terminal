@@ -278,7 +278,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: GATE; `cd <working copy>/Protocol && swift test`; `cd <working copy>/ccgovd && swift build && swift test`; `gh pr view feat/claude-code-features --json state,url`
 
 ### T14 Add worktree launch flag and name rules
-- status: done (#PRNUM, 2026-11-13)
+- status: done (#18, 2026-11-13)
 - needs: T03
 - size: S
 - scope:
