@@ -193,6 +193,15 @@ struct ConfigTests {
         #expect(McpList.scope(of: "claude.ai Gmail", home: f.home, project: f.project) == nil)
     }
 
+    @Test func projectServersListsTheProjectMcpJsonNamesSorted() throws {
+        let f = try fixture()
+        defer { f.cleanup() }
+        #expect(McpList.projectServers(project: f.project).isEmpty)
+        try "{\"mcpServers\": {\"zeta\": {\"command\": \"x\"}, \"alpha\": {\"url\": \"\(secret)\"}}}"
+            .write(toFile: f.project + "/.mcp.json", atomically: true, encoding: .utf8)
+        #expect(McpList.projectServers(project: f.project) == ["alpha", "zeta"])
+    }
+
     @Test @MainActor func mcpTimeoutGivesAnErrorStateAndRefreshReruns() async {
         let calls = Counter()
         let model = McpListModel(home: "/nonexistent", claudePath: { "/usr/bin/claude-fake" }, runner: { _, args, cwd, _ in

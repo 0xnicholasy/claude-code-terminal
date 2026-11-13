@@ -273,6 +273,12 @@ enum McpList {
         var mcpServers: [String: Opaque]?
     }
 
+    /// Server names in `<project>/.mcp.json`, sorted. Check asks before running when this is not
+    /// empty, because `claude mcp list` starts these servers too.
+    static func projectServers(project: String) -> [String] {
+        serverNames(project + "/.mcp.json").sorted()
+    }
+
     static func serverNames(_ path: String) -> Set<String> {
         guard let text = ConfigScanner.read(path),
               let names = try? JSONDecoder().decode(Names.self, from: Data(text.utf8)) else { return [] }

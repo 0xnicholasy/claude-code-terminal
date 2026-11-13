@@ -190,7 +190,8 @@ enum Bootstrap {
                                    confirm: TakeoverAlert.confirm,
                                    paneProcess: { PaneProcess.claudePid(sessionId: $0) },
                                    attention: { AttentionNotifier.shared.handle($0, waitingCount: $1) },
-                                   promptStatus: { PromptNotification.freshStatus(sessionId: $0) })
+                                   promptStatus: { PromptNotification.freshStatus(sessionId: $0) },
+                                   hasTranscript: { TranscriptReplies.transcriptPath(sessionId: $0) != nil })
         AttentionNotifier.shared.pendingStatus = { PromptNotification.freshStatus(sessionId: $0) }
         AttentionNotifier.shared.paneLaunched = { [weak model] id in
             model?.panes.first(where: { $0.id == id })?.hasProcess ?? false
