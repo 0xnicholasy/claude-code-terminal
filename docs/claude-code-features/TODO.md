@@ -347,7 +347,7 @@ Make the ClaudeTerm sidebar show what each open session is doing and how full it
 - verify: FOCUSED with `<TestClass>` = `SidebarTests`; GATE; BUILD
 
 ### T18 Live check M8: worktree session
-- status: done (#PR, 2026-11-13)
+- status: done (#25, 2026-11-13)
 - needs: T17
 - size: S
 - scope: With the BUILD app on this repo, press Cmd-Shift-T and accept the default name.
