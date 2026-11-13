@@ -202,6 +202,20 @@ struct ConfigTests {
         #expect(McpList.projectServers(project: f.project) == ["alpha", "zeta"])
     }
 
+    @Test func projectServersFailsClosedOnAnUnreadableMcpJson() throws {
+        let f = try fixture()
+        defer { f.cleanup() }
+        let path = f.project + "/.mcp.json"
+        try "{not json".write(toFile: path, atomically: true, encoding: .utf8)
+        #expect(McpList.projectServers(project: f.project) == [McpList.unreadableMcpJson])
+        try FileManager.default.removeItem(atPath: path)
+        try FileManager.default.createSymbolicLink(atPath: path, withDestinationPath: f.project + "/missing")
+        #expect(McpList.projectServers(project: f.project) == [McpList.unreadableMcpJson])
+        try FileManager.default.removeItem(atPath: path)
+        try "{\"mcpServers\": {}}".write(toFile: path, atomically: true, encoding: .utf8)
+        #expect(McpList.projectServers(project: f.project).isEmpty)
+    }
+
     @Test @MainActor func mcpTimeoutGivesAnErrorStateAndRefreshReruns() async {
         let calls = Counter()
         let model = McpListModel(home: "/nonexistent", claudePath: { "/usr/bin/claude-fake" }, runner: { _, args, cwd, _ in
