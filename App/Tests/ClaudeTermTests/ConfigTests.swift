@@ -141,4 +141,134 @@ struct ConfigTests {
         let rows = ConfigScanner.hooks(home: f.home, project: f.project).filter { $0.scope == .project }
         #expect(rows.map(\.detail) == ["* -> ok.sh"])
     }
+
+    // MARK: claude mcp list (T21)
+
+    /// From one real `claude mcp list` run (Claude Code 2.1.322, 2026-11-13), with every command,
+    /// argument and URL replaced by a placeholder. The `broken` row is added to cover a failure.
+    static let mcpFixture = """
+    Checking MCP server health\u{2026}
+
+    claude.ai Claude Docs: https://placeholder.invalid/docs-SECRETURL - \u{2714} Connected
+    plugin:vercel:vercel: https://placeholder.invalid/vercel?token=SECRETARG (HTTP) - ! Needs authentication
+    github: npx -y placeholder-github-server --token SECRETARG - \u{2714} Connected
+    linear: https://placeholder.invalid/linear/sse (SSE) - ! Needs authentication
+    broken: node /placeholder/server.js - --flag SECRETARG - \u{2717} Failed to connect
+    dashed: run --mode - needs auth fallback SECRETARG - \u{2714} Connected
+    odd: something - mystery state
+    this line has no separator
+    https://placeholder.invalid/x?token=SECRETARG: junk - \u{2714} Connected
+    --token SECRETARG: wrapped - \u{2714} Connected
+    """
+
+    @Test func mcpFixtureParsesNamesAndStatuses() {
+        let servers = McpList.parse(Self.mcpFixture)
+        #expect(servers.map(\.name) == ["claude.ai Claude Docs", "plugin:vercel:vercel", "github", "linear", "broken", "dashed", "odd"])
+        #expect(servers.map(\.status) == [.connected, .needsAuth, .connected, .needsAuth, .failed, .connected, .unknown])
+        #expect(servers.filter(\.isPlugin).map(\.name) == ["plugin:vercel:vercel"])
+        // The header, the blank line and the line without separators are skipped.
+        #expect(!servers.contains { $0.name.contains("Checking") || $0.name.contains("no separator") })
+    }
+
+    @Test func mcpRowsKeepNoArgumentOrURL() {
+        for s in McpList.parse(Self.mcpFixture) {
+            for text in [s.name, s.id, s.status.rawValue] {
+                #expect(!text.contains("SECRET"))
+                #expect(!text.contains("placeholder"))
+                #expect(!text.contains("://"))
+            }
+        }
+    }
+
+    @Test func mcpScopeComesFromServerNamesOnly() throws {
+        let f = try fixture()
+        defer { f.cleanup() }
+        try "{\"mcpServers\": {\"proj-server\": {\"command\": \"x\", \"env\": {\"K\": \"\(secret)\"}}}}"
+            .write(toFile: f.project + "/.mcp.json", atomically: true, encoding: .utf8)
+        try "{\"numStartups\": 3, \"mcpServers\": {\"github\": {\"args\": [\"\(secret)\"]}}}"
+            .write(toFile: f.home + "/.claude.json", atomically: true, encoding: .utf8)
+        #expect(McpList.scope(of: "proj-server", home: f.home, project: f.project) == .project)
+        #expect(McpList.scope(of: "github", home: f.home, project: f.project) == .user)
+        #expect(McpList.scope(of: "plugin:a:b", home: f.home, project: f.project) == .plugin)
+        #expect(McpList.scope(of: "claude.ai Gmail", home: f.home, project: f.project) == nil)
+    }
+
+    @Test @MainActor func mcpTimeoutGivesAnErrorStateAndRefreshReruns() async {
+        let calls = Counter()
+        let model = McpListModel(home: "/nonexistent", claudePath: { "/usr/bin/claude-fake" }, runner: { _, args, cwd, _ in
+            await calls.add("\(cwd) \(args.joined(separator: " "))")
+            return nil // what the runner returns after its timeout kills the process
+        })
+        await model.load(project: "/p")
+        #expect(model.states["/p"] == .failed(McpListModel.failedText))
+        await model.load(project: "/p")
+        #expect(await calls.items == ["/p mcp list"]) // cached: not run again
+        await model.load(project: "/p", force: true)
+        #expect(await calls.items.count == 2)
+    }
+
+    @Test @MainActor func mcpLoadCachesParsedRowsPerProject() async {
+        let fixture = Data(Self.mcpFixture.utf8)
+        let model = McpListModel(home: "/nonexistent", claudePath: { "/usr/bin/claude-fake" }, runner: { _, _, _, _ in fixture })
+        await model.load(project: "/p")
+        guard case let .loaded(rows) = model.states["/p"] else {
+            Issue.record("not loaded")
+            return
+        }
+        #expect(rows.count == 7)
+        #expect(rows.first { $0.isPlugin }?.scope == .plugin)
+        #expect(model.states["/q"] == nil)
+    }
+
+    @Test @MainActor func mcpLoadInFlightIsNotStartedTwice() async {
+        let calls = Counter()
+        let model = McpListModel(home: "/nonexistent", claudePath: { "/usr/bin/claude-fake" }, runner: { _, _, _, _ in
+            await calls.add("run")
+            try? await Task.sleep(for: .milliseconds(300))
+            return Data()
+        })
+        async let first: Void = model.load(project: "/p")
+        try? await Task.sleep(for: .milliseconds(50))
+        await model.load(project: "/p", force: true)
+        await first
+        #expect(await calls.items.count == 1)
+        #expect(model.states["/p"] == .loaded([]))
+    }
+
+    @Test func mcpRunnerReturnsWhileAGrandchildHoldsThePipe() async {
+        let start = Date()
+        let out = await McpList.run("/bin/sh", ["-c", "sleep 8 & echo hi"], cwd: "/tmp", timeout: 5)
+        #expect(out.map { String(decoding: $0, as: UTF8.self) } == "hi\n")
+        #expect(Date().timeIntervalSince(start) < 3)
+    }
+
+    @Test func mcpRunnerStopsAHungCommand() async {
+        let start = Date()
+        let out = await McpList.run("/bin/sleep", ["10"], cwd: "/tmp", timeout: 0.5)
+        #expect(out == nil)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(await McpList.run("/bin/pwd", [], cwd: "/usr", timeout: 5).map { String(decoding: $0, as: UTF8.self) } == "/usr\n")
+    }
+
+    @Test func readRefusesNonRegularAndOversizedFiles() throws {
+        let f = try fixture()
+        defer { f.cleanup() }
+        let fifo = f.home + "/.claude/skills/fifo"
+        try FileManager.default.createDirectory(atPath: fifo, withIntermediateDirectories: true)
+        #expect(mkfifo(fifo + "/SKILL.md", 0o600) == 0)
+        let big = f.home + "/.claude/agents/big.md"
+        try Data(count: ConfigScanner.maxFileBytes + 1).write(to: URL(fileURLWithPath: big))
+        let device = f.home + "/.claude/agents/device.md"
+        try FileManager.default.createSymbolicLink(atPath: device, withDestinationPath: "/dev/null")
+        #expect(ConfigScanner.read(device) == nil)
+        #expect(ConfigScanner.read(fifo + "/SKILL.md") == nil)
+        #expect(ConfigScanner.read(big) == nil)
+        let items = ConfigScanner.scan(home: f.home, project: f.project) // returns instead of blocking on the FIFO
+        #expect(items.first { $0.name == "fifo" }?.unreadable == true)
+    }
+}
+
+actor Counter {
+    private(set) var items: [String] = []
+    func add(_ s: String) { items.append(s) }
 }
