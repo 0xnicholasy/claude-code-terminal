@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 enum DetailTab: String, CaseIterable, Identifiable {
     case sessions = "Sessions"
     case usage = "Usage"
+    case config = "Config"
     var id: String { rawValue }
 }
 
@@ -14,23 +15,29 @@ struct ContentView: View {
     @ObservedObject var model: WorkspaceModel
     @ObservedObject var usage: UsageModel
     @ObservedObject var clipboard: ClipboardModel
+    @ObservedObject var transcripts: TranscriptStatusModel
     @StateObject private var git = GitStatusModel()
     @StateObject private var replies = RepliesModel()
+    @StateObject private var mcp = Bootstrap.makeMcp()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(model: model)
+            SidebarView(model: model, statuses: transcripts.statuses)
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300)
         } detail: {
             ZStack {
-                // Panes stay mounted under the Usage tab so their terminals keep running untouched.
+                // Panes stay mounted under the Usage and Config tabs so their terminals keep running untouched.
                 VStack(spacing: 0) {
                     PaneArea(model: model, replies: showReplies && model.selectedID != nil ? replies : nil)
                     if let session = model.selectedSession { PaneStatusStrip(session: session, model: model) }
                 }
                 if model.tab == .usage {
                     UsageView(usage: usage, knownPaths: model.rows.map(\.cwd)).background(Palette.main)
+                } else if model.tab == .config {
+                    ConfigView(project: model.selectedSession?.cwd, mcp: mcp)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Palette.main)
                 }
             }
             .background(Palette.main)
@@ -50,6 +57,7 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 TabSwitcher(tab: $model.tab)
                     .help([Shortcuts.hint("Sessions", Shortcuts.sessionsTab), Shortcuts.hint("Usage", Shortcuts.usageTab),
+                           Shortcuts.hint("Config", Shortcuts.configTab),
                            Shortcuts.hint("Switch", Shortcuts.toggleTab)].joined(separator: "\n"))
             }
             .plainBackground()
@@ -101,7 +109,7 @@ extension ToolbarContent {
     }
 }
 
-/// Sessions / Usage switch drawn as two flat text tabs instead of a segmented control.
+/// Sessions / Usage / Config switch drawn as two flat text tabs instead of a segmented control.
 struct TabSwitcher: View {
     @Binding var tab: DetailTab
 
@@ -168,6 +176,9 @@ enum Palette {
     /// Raised surfaces (cards, list containers) and their outline, tuned for both appearances.
     static let surface = Color.primary.opacity(0.045)
     static let hairline = Color.primary.opacity(0.08)
+    /// Context ring warning colours, from the terminal palette's yellow and red.
+    static let contextAmber = dynamic(light: 0xA87512, dark: 0xE3B26B)
+    static let contextRed = dynamic(light: 0xB6412F, dark: 0xE06C5A)
 
     static func dynamic(light: UInt32, dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -206,6 +217,8 @@ struct Card<Content: View>: View {
 
 struct SidebarView: View {
     @ObservedObject var model: WorkspaceModel
+    /// Transcript status of open panes with a running claude, by session id.
+    var statuses: [String: TranscriptStatus] = [:]
     /// Projects the user folded or unfolded, by project id. Without an entry, a project is expanded
     /// when it has a pane open or a session waiting, and folded otherwise, so the list stays short.
     @AppStorage("sidebar.projectExpansion") private var expansionJSON = "{}"
@@ -249,7 +262,8 @@ struct SidebarView: View {
         }
         if expanded.wrappedValue {
             ForEach(project.sessions) { s in
-                SessionRow(session: s, model: model, isSelected: s.sessionId == model.selectedID) {
+                SessionRow(session: s, model: model, status: statuses[s.sessionId],
+                           isSelected: s.sessionId == model.selectedID) {
                     model.open(s)
                 }
             }
@@ -329,6 +343,7 @@ struct ProjectHeader: View {
 struct SessionRow: View {
     let session: SessionInfo
     @ObservedObject var model: WorkspaceModel
+    var status: TranscriptStatus?
     let isSelected: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -347,14 +362,29 @@ struct SessionRow: View {
                         if session.pinned {
                             Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(Palette.textTertiary)
                         }
+                        if let branch = Worktree.branch(of: session.cwd) {
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                                .labelStyle(.titleAndIcon)
+                                .font(.system(size: 10))
+                                .foregroundStyle(Palette.textTertiary)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
                     }
-                    if isWaiting {
+                    if isWaiting, let tool = answerable, let label = PromptAnswer.label(tool, cwd: session.cwd) {
+                        PromptButtons(label: label) { allow in
+                            model.answer(sessionId: session.sessionId, toolUseId: tool.id, allow: allow)
+                        }
+                    } else if isWaiting {
                         Text("Waiting for you").font(.system(size: 11)).foregroundStyle(Palette.accent)
+                    } else if let activity {
+                        Text(activity).font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+                            .lineLimit(1).truncationMode(.tail)
                     }
                 }
                 Spacer(minLength: 4)
                 // Details stay out of the way until the row is hovered or selected.
                 if hovering || isSelected { trailing }
+                if let fraction = status?.contextFraction { ContextRing(fraction: fraction) }
                 Text(shortcut ?? "")
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Palette.textTertiary)
@@ -362,7 +392,7 @@ struct SessionRow: View {
             }
             .padding(.leading, 20)
             .padding(.trailing, 6)
-            .padding(.vertical, isWaiting ? 5 : 0)
+            .padding(.vertical, isWaiting || activity != nil ? 5 : 0)
             .frame(minHeight: 28)
             .contentShape(Rectangle())
             .background(RoundedRectangle(cornerRadius: 7).fill(rowFill))
@@ -374,6 +404,18 @@ struct SessionRow: View {
     }
 
     private var isWaiting: Bool { session.state == .blocked }
+    /// The pending tool the row can answer inline: only for a session whose pane has a running process, and only a
+    /// plain yes/no prompt (D10). Other waiting rows keep "Waiting for you".
+    private var answerable: TranscriptStatus.PendingTool? {
+        guard let status, model.panes.first(where: { $0.id == session.sessionId })?.hasProcess == true else { return nil }
+        return PromptAnswer.eligible(status, cwd: session.cwd)
+    }
+    /// What the session is doing right now; only while it is working. Between tool calls it reads
+    /// "Working", so the row keeps its height instead of jumping on every tool start and finish.
+    private var activity: String? {
+        guard session.state == .running, let status else { return nil }
+        return status.activity ?? "Working"
+    }
     private var isDim: Bool { session.state == .hibernated || session.demoted }
     private var nameColor: Color {
         if isSelected || isWaiting { return Palette.text }
@@ -387,6 +429,8 @@ struct SessionRow: View {
     private func helpText(_ shortcut: String?) -> String {
         var lines = [Formatting.shortPath(session.cwd), "State: \(stateText)"]
         if session.rssBytes > 0, session.state != .hibernated { lines.append("Memory: \(Formatting.bytes(session.rssBytes))") }
+        if let context = status?.contextHelp { lines.append(context) }
+        if isWaiting, let detail = answerable?.detail { lines.append("Pending: \(detail)") }
         if !session.ownedByApp, session.kind == .interactive { lines.append("Running in another terminal") }
         if let shortcut { lines.append(Shortcuts.hint("Show pane", shortcut)) }
         lines.append("Right-click for more actions")
@@ -419,6 +463,30 @@ struct SessionRow: View {
     }
 }
 
+/// How full the session's context window is, coloured amber from 70% and red from 85%.
+struct ContextRing: View {
+    let fraction: Double
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Palette.hairline, lineWidth: 2)
+            Circle().trim(from: 0, to: min(max(fraction, 0), 1))
+                .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 11, height: 11)
+        .padding(.horizontal, 1)
+    }
+
+    private var color: Color {
+        switch ContextLevel.of(fraction) {
+        case .normal: Palette.textTertiary
+        case .amber: Palette.contextAmber
+        case .red: Palette.contextRed
+        }
+    }
+}
+
 struct StateDot: View {
     let state: SessionState
     let demoted: Bool
@@ -441,6 +509,33 @@ struct StateDot: View {
             }
         }
         .frame(width: 12, height: 12)
+    }
+}
+
+/// The waiting row's second line for a plain permission prompt: what the tool wants to do, plus
+/// Allow and Deny. The buttons answer the tool_use they were drawn for (`WorkspaceModel.answer`
+/// re-checks that it is still the pending one) and do not select the row or focus the pane.
+struct PromptButtons: View {
+    let label: String
+    let answer: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // The label is never cut: it is exactly what Allow approves (D15).
+            Text(label).font(.system(size: 11)).foregroundStyle(Palette.accent)
+                .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 4) {
+                Button("Allow") { answer(true) }
+                Button("Deny") { answer(false) }
+            }
+            .fixedSize()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        // The row is itself a Button. A click in the gaps of this line is swallowed here, so a
+        // near miss on a mini button does not select the row or focus the pane.
+        .contentShape(Rectangle())
+        .onTapGesture {}
     }
 }
 
@@ -470,6 +565,12 @@ struct RowMenu: View {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.cwd)])
         }
         .disabled(session.cwd.isEmpty)
+        if let worktree = Worktree.root(of: session.cwd) {
+            // D2: the app never deletes a worktree; there is no remove action here.
+            Button("Reveal Worktree") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: worktree)])
+            }
+        }
         Button("Copy Resume Command") {
             guard let line = model.resumeCommandLine(session) else { return }
             NSPasteboard.general.clearContents()

@@ -41,6 +41,10 @@ The last 50 texts copied in any app, searchable from the keyboard. Kept in memor
 
 Daily cost for the last 30 days (via [ccusage](https://github.com/ryoppippi/ccusage)); hover a day for tokens and models.
 
+### Config tab
+
+MCP servers, skills, agents and hooks for the selected session's project, each with its scope. Click a skill, agent or hook to reveal its file. MCP health is checked only when you click Check or Refresh, because `claude mcp list` starts every server. Read-only; `.env` files and settings `env` values are never read.
+
 ### Daemon (`ccgovd`)
 
 - Indexes sessions with memory and CPU per process tree.
@@ -54,7 +58,7 @@ Daily cost for the last 30 days (via [ccusage](https://github.com/ryoppippi/ccus
 | Cmd-1 ... Cmd-8, Cmd-9 | Pane 1 to 8, last pane |
 | Ctrl-Tab, Cmd-Shift-] / [ | Next / previous pane |
 | Cmd-Option-Down / Up | Next / previous session in the sidebar |
-| Cmd-Ctrl-1 / 2, Cmd-Shift-U | Sessions / Usage tab |
+| Cmd-Ctrl-1 / 2 / 3, Cmd-Shift-U | Sessions / Usage / Config tab; toggle Sessions / Usage |
 | Cmd-N, Cmd-Shift-N | New session, new session in this project |
 | Cmd-Shift-W, Cmd-Ctrl-S | Close pane, toggle sidebar |
 | Cmd-Shift-M | Formatted Output on / off |

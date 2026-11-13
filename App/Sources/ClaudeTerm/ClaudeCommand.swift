@@ -6,6 +6,7 @@ enum LaunchError: Error, Equatable {
     case invalidCwd
     case unsupportedExecutablePath
     case claudeNotFound
+    case invalidWorktreeName
 }
 
 /// What a pane executes: an argv (never a shell string) plus a working directory.
@@ -24,8 +25,15 @@ struct LaunchSpec: Equatable, Sendable {
 }
 
 enum ClaudeCommand {
-    static func newSession(id: String, cwd: String, executable: String) throws -> LaunchSpec {
-        try make(["--session-id", id], id: id, cwd: cwd, executable: executable)
+    /// `worktree` adds `-w <name>` so claude creates and runs in `<repo>/.claude/worktrees/<name>`.
+    /// The name enters libghostty's `bash -c` string, so only `Worktree.isValidName` names pass.
+    static func newSession(id: String, cwd: String, executable: String, worktree: String? = nil) throws -> LaunchSpec {
+        var flags = ["--session-id", id]
+        if let worktree {
+            guard Worktree.isValidName(worktree) else { throw LaunchError.invalidWorktreeName }
+            flags += ["-w", worktree]
+        }
+        return try make(flags, id: id, cwd: cwd, executable: executable)
     }
 
     static func resume(id: String, cwd: String, executable: String) throws -> LaunchSpec {

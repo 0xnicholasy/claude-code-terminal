@@ -10,21 +10,33 @@ final class Pane: ObservableObject, Identifiable {
     enum Origin { case new, resume }
 
     nonisolated let id: String
+    /// The session's folder. For a worktree session this is the worktree path (D11), so restore and
+    /// `--resume` run there.
     let cwd: String
+    /// Set for a session started with `claude -w`: the first launch runs in `repo` with `-w name`.
+    /// Not persisted: after restore the pane resumes in `cwd` like any other.
+    let worktree: (repo: String, name: String)?
     @Published var title: String
     var origin: Origin
     private(set) var launched: LaunchSpec?
     private var terminal: TerminalViewState?
     var onChange: (() -> Void)?
 
-    init(sessionId: String, cwd: String, title: String, origin: Origin) {
+    init(sessionId: String, cwd: String, title: String, origin: Origin, worktree: (repo: String, name: String)? = nil) {
         id = sessionId
         self.cwd = cwd
         self.title = title
         self.origin = origin
+        self.worktree = worktree
     }
 
     var hasProcess: Bool { launched != nil }
+
+    /// Presses a key in this pane's terminal. False when there is no terminal to receive it.
+    /// Never paste text here: a key press is the only input path for answering a prompt.
+    func send(_ key: TerminalKey) -> Bool {
+        terminal?.sendKey(key) ?? false
+    }
 
     func markLaunched(_ spec: LaunchSpec) {
         launched = spec
@@ -45,7 +57,7 @@ final class Pane: ObservableObject, Identifiable {
     /// Names as `ghostty +list-keybinds --default` prints them (Ghostty 1.x).
     static let unboundKeys = ["super+q", "super+n", "super+shift+w", "ctrl+tab", "ctrl+shift+tab",
                               "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down",
-                              "super+shift+v", "super+shift+m"]
+                              "super+shift+v", "super+shift+m", "super+shift+t"]
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
     /// Warm palette matching the window chrome (`Palette.main`), after the Claude desktop app. Theme
     /// commands are applied after the builder's, so colours set in the builder would be overwritten.
@@ -132,6 +144,17 @@ final class WorkspaceModel: ObservableObject {
     /// Sessions that just started or stopped waiting, plus how many interactive sessions wait now
     /// (`AttentionNotifier` in the app: notification banner and Dock badge; no-op in tests).
     private let attention: (WaitingChange, Int) -> Void
+    /// A fresh tail-parse of a session's transcript, by session id (wired in Bootstrap; nil in tests by default).
+    private let promptStatus: (String) -> TranscriptStatus?
+    /// Presses a key in a pane (`Pane.send` in the app, a recorder in tests).
+    private let sendKey: (Pane, TerminalKey) -> Bool
+    /// The git top-level folder for a path, or nil outside a repo (`git rev-parse --show-toplevel`
+    /// off the main thread in the app, a fake in tests).
+    private let repoRoot: @Sendable (String) async -> String?
+    /// Whether claude saved a transcript for a session id. A pane whose session never got a message
+    /// has none, and `claude --resume` on it fails with "No conversation found", so restore starts it
+    /// as a new session with the same id instead.
+    private let hasTranscript: (String) -> Bool
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
@@ -140,9 +163,17 @@ final class WorkspaceModel: ObservableObject {
          processes: ProcessControl = SystemProcessControl(),
          confirm: @escaping (SessionInfo) -> Bool = { _ in false },
          paneProcess: @escaping (String) -> Int32? = { _ in nil },
-         attention: @escaping (WaitingChange, Int) -> Void = { _, _ in }) {
+         attention: @escaping (WaitingChange, Int) -> Void = { _, _ in },
+         promptStatus: @escaping (String) -> TranscriptStatus? = { _ in nil },
+         sendKey: @escaping (Pane, TerminalKey) -> Bool = { $0.send($1) },
+         repoRoot: @escaping @Sendable (String) async -> String? = { await WorkspaceModel.gitTopLevel($0) },
+         hasTranscript: @escaping (String) -> Bool = { _ in true }) {
+        self.repoRoot = repoRoot
+        self.hasTranscript = hasTranscript
         self.paneProcess = paneProcess
         self.attention = attention
+        self.promptStatus = promptStatus
+        self.sendKey = sendKey
         self.store = store
         self.claudePath = claudePath
         self.notify = notify
@@ -252,6 +283,38 @@ final class WorkspaceModel: ObservableObject {
         select(pane.id)
     }
 
+    /// Starts a brand-new session in a new git worktree of the repo that holds `cwd`: claude runs in
+    /// the repo root with `-w name` and creates `<repo>/.claude/worktrees/<name>`, which becomes the
+    /// pane's folder. A `cwd` inside another worktree session starts from that worktree's repo.
+    func newWorktreeSession(from cwd: String, name: String) async {
+        guard Worktree.isValidName(name) else {
+            notice = "Invalid worktree name: use letters, digits, dots, dashes and underscores (at most \(Worktree.maxNameLength))."
+            return
+        }
+        guard let top = await repoRoot(cwd), top.hasPrefix("/") else {
+            notice = "Not a git repository: \(cwd)"
+            return
+        }
+        let repo = Worktree.parentRepo(of: top) ?? top
+        let path = Worktree.path(repo: repo, name: name)
+        // A pane that is still starting has not created its folder yet, so open panes count too.
+        guard !FileManager.default.fileExists(atPath: path), !panes.contains(where: { $0.cwd == path }) else {
+            notice = "A worktree named \(name) already exists in \((repo as NSString).lastPathComponent)."
+            return
+        }
+        let id = UUID().uuidString.lowercased()
+        let pane = makePane(sessionId: id, cwd: path, title: name, origin: .new, worktree: (repo, name))
+        insert(pane)
+        select(pane.id)
+    }
+
+    nonisolated static func gitTopLevel(_ cwd: String) async -> String? {
+        guard let data = await ProcessRunner.run("/usr/bin/git", ["-C", cwd] + GitStatus.safeConfig
+            + ["rev-parse", "--show-toplevel"], timeout: 10) else { return nil }
+        let out = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.hasPrefix("/") && !out.contains("\n") ? out : nil
+    }
+
     /// Sidebar click.
     func open(_ session: SessionInfo) {
         if panes.contains(where: { $0.id == session.sessionId }) {
@@ -358,6 +421,22 @@ final class WorkspaceModel: ObservableObject {
         newSession(cwd: cwd)
     }
 
+    /// Answers a pending permission prompt with a key press. The transcript is re-read first, so a
+    /// prompt that was answered or replaced since the button was shown is never answered blindly.
+    func answer(sessionId: String, toolUseId: String, allow: Bool) {
+        guard let pane = panes.first(where: { $0.id == sessionId }),
+              let state = rows.first(where: { $0.sessionId == sessionId })?.state,
+              PromptAnswer.canSend(state: state, shownToolUseId: toolUseId,
+                                   current: promptStatus(sessionId), hasProcess: pane.hasProcess,
+                                   cwd: pane.cwd) else {
+            notice = PromptAnswer.staleNotice
+            return
+        }
+        if !sendKey(pane, PromptAnswer.keys(allow: allow)) {
+            notice = PromptAnswer.failedSendNotice
+        }
+    }
+
     /// Removes the pane and ends its claude. Closing the view alone left claude running in the
     /// background (seen live 2026-11-07); SIGTERM lets it save the transcript, so the session can be
     /// resumed later from the sidebar.
@@ -398,8 +477,9 @@ final class WorkspaceModel: ObservableObject {
             guard let window = layout.windows.first else { return }
             panes = PaneOrder.grouped(window.panes.compactMap { rec in
                 guard SessionID.isValid(rec.sessionId) else { return nil }
-                return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title, origin: .resume)
-            }, key: \.cwd)
+                return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title,
+                                origin: hasTranscript(rec.sessionId) ? .resume : .new)
+            }, key: { SidebarLayout.projectKey($0.cwd) })
             windowFrameForRestore = window.frame
             windowFrame = window.frame // set before select() persists, so the saved frame is not overwritten with nil
             if let sel = window.selected, panes.contains(where: { $0.id == sel }) {
@@ -413,8 +493,9 @@ final class WorkspaceModel: ObservableObject {
 
     // MARK: Internals
 
-    private func makePane(sessionId: String, cwd: String, title: String, origin: Pane.Origin) -> Pane {
-        let pane = Pane(sessionId: sessionId, cwd: cwd, title: title, origin: origin)
+    private func makePane(sessionId: String, cwd: String, title: String, origin: Pane.Origin,
+                          worktree: (repo: String, name: String)? = nil) -> Pane {
+        let pane = Pane(sessionId: sessionId, cwd: cwd, title: title, origin: origin, worktree: worktree)
         notify(.attach, sessionId)
         pane.onChange = { [weak self] in
             self?.objectWillChange.send()
@@ -430,7 +511,12 @@ final class WorkspaceModel: ObservableObject {
         }
         do {
             let spec = switch pane.origin {
-            case .new: try ClaudeCommand.newSession(id: pane.id, cwd: pane.cwd, executable: exe)
+            case .new:
+                if let wt = pane.worktree {
+                    try ClaudeCommand.newSession(id: pane.id, cwd: wt.repo, executable: exe, worktree: wt.name)
+                } else {
+                    try ClaudeCommand.newSession(id: pane.id, cwd: pane.cwd, executable: exe)
+                }
             case .resume: try ClaudeCommand.resume(id: pane.id, cwd: pane.cwd, executable: exe)
             }
             pane.markLaunched(spec)

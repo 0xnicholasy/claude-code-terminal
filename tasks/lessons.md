@@ -21,3 +21,4 @@
 - GUI-launched apps get launchd's PATH, and so does every child: hooks in a pane's claude failed with `node: command not found`. Adopt the login shell's PATH at startup, before any pane spawns (2026-11-07).
 - libghostty-spm applies its theme after the builder config, so `selection-*` or colour keys set with `withCustom` are overwritten. Put colours in the `TerminalTheme` passed to `TerminalController(theme:)` (2026-11-07).
 - `proc_pidinfo` cannot read processes owned by another user, such as the root-owned `/usr/bin/login` that sits between the app and each pane's claude. Use `sysctl KERN_PROC_ALL` for parent pids (2026-11-07).
+- Mutation checks: undo the mutation with the inverse edit, never `git checkout -- <file>` on a file that also holds uncommitted work. It reverts the real change too. (2026-11-14, ClaudeTerm backlog fix: the restore fix was wiped and had to be re-applied.)

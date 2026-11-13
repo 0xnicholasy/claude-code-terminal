@@ -6,18 +6,27 @@ import SwiftUI
 struct ClaudeTermApp: App {
     @StateObject private var model = Bootstrap.makeModel()
     @StateObject private var usage = Bootstrap.makeUsage()
+    @StateObject private var transcripts = Bootstrap.makeTranscripts()
     @StateObject private var clipboard = ClipboardModel()
     @StateObject private var updates = UpdateModel()
     @AppStorage(RepliesModel.enabledKey) private var showReplies = true
+    @State private var worktreeRequest: WorktreeSheet.Request?
 
     var body: some Scene {
         Window("ClaudeTerm", id: "main") {
-            ContentView(model: model, usage: usage, clipboard: clipboard)
+            ContentView(model: model, usage: usage, clipboard: clipboard, transcripts: transcripts)
                 .frame(minWidth: 760, minHeight: 480)
+                .sheet(item: $worktreeRequest) { req in
+                    WorktreeSheet(request: req) { name in
+                        Task { await model.newWorktreeSession(from: req.cwd, name: name) }
+                    }
+                    .id(req.id) // a request for another folder starts with a fresh default name
+                }
                 .task {
                     Bootstrap.start(model)
                     guard !Bootstrap.isUnderTest else { return }
                     clipboard.start()
+                    transcripts.start { [model] in model.panes }
                     updates.startAutomatic { v in
                         model.notice = "ClaudeTerm \(v) is available. ClaudeTerm > About ClaudeTerm to install it."
                     }
@@ -39,6 +48,21 @@ struct ClaudeTermApp: App {
                 Button("New Session in This Project") { model.newSessionInCurrentProject() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(model.selectedID == nil)
+                Button("New Session in Worktree...") {
+                    guard let cwd = model.selectedSession?.cwd, !cwd.isEmpty else {
+                        model.notice = "Select a pane first: the worktree is made from its project."
+                        return
+                    }
+                    Task {
+                        guard let top = await WorkspaceModel.gitTopLevel(cwd) else {
+                            model.notice = "Not a git repository: \(cwd)"
+                            return
+                        }
+                        worktreeRequest = WorktreeSheet.Request(cwd: cwd, topLevel: top)
+                    }
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(model.selectedID == nil || worktreeRequest != nil)
             }
             CommandGroup(after: .newItem) {
                 Button("Close Pane") {
@@ -86,6 +110,8 @@ struct NavigationCommands: Commands {
                 .keyboardShortcut("1", modifiers: [.command, .control])
             Button("Usage") { model.tab = .usage }
                 .keyboardShortcut("2", modifiers: [.command, .control])
+            Button("Config") { model.tab = .config }
+                .keyboardShortcut("3", modifiers: [.command, .control])
             Button("Toggle Sessions / Usage") { model.tab = model.tab == .usage ? .sessions : .usage }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
             Divider()
@@ -145,6 +171,14 @@ enum Bootstrap {
         return UsageModel(claudePath: { binary.get() }, defaults: .standard)
     }
 
+    static func makeMcp() -> McpListModel {
+        if isUnderTest { return McpListModel(claudePath: { nil }) }
+        let binary = claude
+        return McpListModel(claudePath: { binary.get() })
+    }
+
+    static func makeTranscripts() -> TranscriptStatusModel { TranscriptStatusModel() }
+
     static func makeModel() -> WorkspaceModel {
         if isUnderTest { return WorkspaceModel(store: nil, claudePath: { nil }) }
         InheritedSessionEnv.scrubProcessEnvironment()
@@ -155,7 +189,14 @@ enum Bootstrap {
                                    request: { await DaemonClient.request($0, sessionId: $1) },
                                    confirm: TakeoverAlert.confirm,
                                    paneProcess: { PaneProcess.claudePid(sessionId: $0) },
-                                   attention: { AttentionNotifier.shared.handle($0, waitingCount: $1) })
+                                   attention: { AttentionNotifier.shared.handle($0, waitingCount: $1) },
+                                   promptStatus: { PromptNotification.freshStatus(sessionId: $0) },
+                                   hasTranscript: { TranscriptReplies.transcriptPath(sessionId: $0) != nil })
+        AttentionNotifier.shared.pendingStatus = { PromptNotification.freshStatus(sessionId: $0) }
+        AttentionNotifier.shared.paneLaunched = { [weak model] id in
+            model?.panes.first(where: { $0.id == id })?.hasProcess ?? false
+        }
+        AttentionNotifier.shared.onAnswer = { [weak model] in model?.answer(sessionId: $0, toolUseId: $1, allow: $2) }
         AttentionNotifier.shared.isShowing = { [weak model] id in
             NSApp.isActive && model?.tab == .sessions && model?.selectedID == id
         }
