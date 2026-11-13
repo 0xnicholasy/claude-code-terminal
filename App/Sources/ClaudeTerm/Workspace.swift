@@ -10,18 +10,24 @@ final class Pane: ObservableObject, Identifiable {
     enum Origin { case new, resume }
 
     nonisolated let id: String
+    /// The session's folder. For a worktree session this is the worktree path (D11), so restore and
+    /// `--resume` run there.
     let cwd: String
+    /// Set for a session started with `claude -w`: the first launch runs in `repo` with `-w name`.
+    /// Not persisted: after restore the pane resumes in `cwd` like any other.
+    let worktree: (repo: String, name: String)?
     @Published var title: String
     var origin: Origin
     private(set) var launched: LaunchSpec?
     private var terminal: TerminalViewState?
     var onChange: (() -> Void)?
 
-    init(sessionId: String, cwd: String, title: String, origin: Origin) {
+    init(sessionId: String, cwd: String, title: String, origin: Origin, worktree: (repo: String, name: String)? = nil) {
         id = sessionId
         self.cwd = cwd
         self.title = title
         self.origin = origin
+        self.worktree = worktree
     }
 
     var hasProcess: Bool { launched != nil }
@@ -142,6 +148,9 @@ final class WorkspaceModel: ObservableObject {
     private let promptStatus: (String) -> TranscriptStatus?
     /// Presses a key in a pane (`Pane.send` in the app, a recorder in tests).
     private let sendKey: (Pane, TerminalKey) -> Bool
+    /// The git top-level folder for a path, or nil outside a repo (`git rev-parse --show-toplevel`
+    /// off the main thread in the app, a fake in tests).
+    private let repoRoot: @Sendable (String) async -> String?
     private var sourceTask: Task<Void, Never>?
 
     init(store: LayoutStore?, claudePath: @escaping @Sendable () -> String?,
@@ -152,7 +161,9 @@ final class WorkspaceModel: ObservableObject {
          paneProcess: @escaping (String) -> Int32? = { _ in nil },
          attention: @escaping (WaitingChange, Int) -> Void = { _, _ in },
          promptStatus: @escaping (String) -> TranscriptStatus? = { _ in nil },
-         sendKey: @escaping (Pane, TerminalKey) -> Bool = { $0.send($1) }) {
+         sendKey: @escaping (Pane, TerminalKey) -> Bool = { $0.send($1) },
+         repoRoot: @escaping @Sendable (String) async -> String? = { await WorkspaceModel.gitTopLevel($0) }) {
+        self.repoRoot = repoRoot
         self.paneProcess = paneProcess
         self.attention = attention
         self.promptStatus = promptStatus
@@ -264,6 +275,39 @@ final class WorkspaceModel: ObservableObject {
         let pane = makePane(sessionId: id, cwd: cwd, title: (cwd as NSString).lastPathComponent, origin: .new)
         insert(pane)
         select(pane.id)
+    }
+
+    /// Starts a brand-new session in a new git worktree of the repo that holds `cwd`: claude runs in
+    /// the repo root with `-w name` and creates `<repo>/.claude/worktrees/<name>`, which becomes the
+    /// pane's folder. A `cwd` inside another worktree session starts from that worktree's repo.
+    func newWorktreeSession(from cwd: String, name: String) async {
+        guard Worktree.isValidName(name) else {
+            notice = "Invalid worktree name: use letters, digits, dots, dashes and underscores (at most \(Worktree.maxNameLength))."
+            return
+        }
+        guard let top = await repoRoot(cwd), top.hasPrefix("/") else {
+            notice = "Not a git repository: \(cwd)"
+            return
+        }
+        let repo = Worktree.parentRepo(of: top) ?? top
+        let path = Worktree.path(repo: repo, name: name)
+        // A pane that is still starting has not created its folder yet, so open panes count too.
+        guard !FileManager.default.fileExists(atPath: path), !panes.contains(where: { $0.cwd == path }) else {
+            notice = "A worktree named \(name) already exists in \((repo as NSString).lastPathComponent)."
+            return
+        }
+        let id = UUID().uuidString.lowercased()
+        let pane = makePane(sessionId: id, cwd: path, title: name, origin: .new, worktree: (repo, name))
+        let after = panes.lastIndex { $0.cwd == repo || Worktree.parentRepo(of: $0.cwd) == repo }
+        panes.insert(pane, at: after.map { $0 + 1 } ?? panes.count)
+        select(pane.id)
+    }
+
+    nonisolated static func gitTopLevel(_ cwd: String) async -> String? {
+        guard let data = await ProcessRunner.run("/usr/bin/git", ["-C", cwd] + GitStatus.safeConfig
+            + ["rev-parse", "--show-toplevel"], timeout: 10) else { return nil }
+        let out = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.hasPrefix("/") && !out.contains("\n") ? out : nil
     }
 
     /// Sidebar click.
@@ -443,8 +487,9 @@ final class WorkspaceModel: ObservableObject {
 
     // MARK: Internals
 
-    private func makePane(sessionId: String, cwd: String, title: String, origin: Pane.Origin) -> Pane {
-        let pane = Pane(sessionId: sessionId, cwd: cwd, title: title, origin: origin)
+    private func makePane(sessionId: String, cwd: String, title: String, origin: Pane.Origin,
+                          worktree: (repo: String, name: String)? = nil) -> Pane {
+        let pane = Pane(sessionId: sessionId, cwd: cwd, title: title, origin: origin, worktree: worktree)
         notify(.attach, sessionId)
         pane.onChange = { [weak self] in
             self?.objectWillChange.send()
@@ -460,7 +505,12 @@ final class WorkspaceModel: ObservableObject {
         }
         do {
             let spec = switch pane.origin {
-            case .new: try ClaudeCommand.newSession(id: pane.id, cwd: pane.cwd, executable: exe)
+            case .new:
+                if let wt = pane.worktree {
+                    try ClaudeCommand.newSession(id: pane.id, cwd: wt.repo, executable: exe, worktree: wt.name)
+                } else {
+                    try ClaudeCommand.newSession(id: pane.id, cwd: pane.cwd, executable: exe)
+                }
             case .resume: try ClaudeCommand.resume(id: pane.id, cwd: pane.cwd, executable: exe)
             }
             pane.markLaunched(spec)
