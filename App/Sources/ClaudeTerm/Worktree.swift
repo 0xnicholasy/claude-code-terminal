@@ -48,6 +48,19 @@ enum Worktree {
         (repo.hasSuffix("/") ? String(repo.dropLast()) : repo) + folder + name
     }
 
+    /// The worktree folder `<repo>/.claude/worktrees/<name>` that holds `cwd`, or nil.
+    static func root(of cwd: String) -> String? {
+        guard let repo = parentRepo(of: cwd) else { return nil }
+        let rest = cwd.dropFirst(repo.count + folder.count)
+        return repo + folder + (rest.split(separator: "/", maxSplits: 1).first.map(String.init) ?? "")
+    }
+
+    /// The branch `claude -w <name>` creates: `worktree-<name>` (T03), read from the folder name
+    /// without running git. Only exact for names without `/`, which are the only ones the app makes.
+    static func branch(of cwd: String) -> String? {
+        root(of: cwd).map { "worktree-" + ($0 as NSString).lastPathComponent }
+    }
+
     /// The repo a worktree session's cwd belongs to: `<repo>` for `<repo>/.claude/worktrees/<name>`
     /// (or a folder inside it); nil for any other path. The folder name is not held to `isValidName`:
     /// claude itself names folders outside that set (`-w a/b` makes `a+b`).

@@ -298,8 +298,7 @@ final class WorkspaceModel: ObservableObject {
         }
         let id = UUID().uuidString.lowercased()
         let pane = makePane(sessionId: id, cwd: path, title: name, origin: .new, worktree: (repo, name))
-        let after = panes.lastIndex { $0.cwd == repo || Worktree.parentRepo(of: $0.cwd) == repo }
-        panes.insert(pane, at: after.map { $0 + 1 } ?? panes.count)
+        insert(pane)
         select(pane.id)
     }
 
@@ -473,7 +472,7 @@ final class WorkspaceModel: ObservableObject {
             panes = PaneOrder.grouped(window.panes.compactMap { rec in
                 guard SessionID.isValid(rec.sessionId) else { return nil }
                 return makePane(sessionId: rec.sessionId, cwd: rec.cwd, title: rec.title, origin: .resume)
-            }, key: \.cwd)
+            }, key: { SidebarLayout.projectKey($0.cwd) })
             windowFrameForRestore = window.frame
             windowFrame = window.frame // set before select() persists, so the saved frame is not overwritten with nil
             if let sel = window.selected, panes.contains(where: { $0.id == sel }) {
