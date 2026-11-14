@@ -246,9 +246,11 @@ struct QuotaChip: View {
             Text(label).foregroundStyle(.secondary)
             PaceBar(window: w, now: now)
             Text("\(Int(w.usedPercent.rounded()))%").fontWeight(.medium)
-            if let p = projected {
-                Text("\u{2192}\(Int(p.rounded()))%")
-                    .foregroundStyle(p >= 100 ? Color.red : Color.secondary)
+            // Used so far against even pace for this point in the window: "11% <= 24%" is on track.
+            if let e = w.expectedPercent(now: now) {
+                let over = w.usedPercent.rounded() > e.rounded()
+                Text("\(over ? ">" : "\u{2264}") \(Int(e.rounded()))%")
+                    .foregroundStyle(over ? Palette.accent : Color.secondary)
             }
         }
         .help(help(name, w, projected: projected, now: now))
@@ -271,7 +273,10 @@ struct QuotaChip: View {
     private func help(_ name: String, _ w: QuotaWindow, projected: Double?, now: Date) -> String {
         var lines = [["\(name): \(Int(w.usedPercent.rounded()))% used", QuotaStyle.resetText(w, now: now)]
             .compactMap { $0 }.joined(separator: ", ")]
-        if let e = w.expectedPercent(now: now) { lines.append("Even pace: \(Int(e.rounded()))% by now") }
+        if let e = w.expectedPercent(now: now) {
+            let verdict = w.usedPercent.rounded() > e.rounded() ? "ahead of" : "within"
+            lines.append("Even pace: \(Int(e.rounded()))% by now (\(verdict) pace)")
+        }
         if let p = projected { lines.append("At this rate: \(Int(p.rounded()))% at reset") }
         if w.windowMinutes >= 24 * 60, let o = outlook, !o.summary().isEmpty { lines.append(o.summary()) }
         lines.append(Shortcuts.hint("Details in Usage tab", Shortcuts.usageTab))
