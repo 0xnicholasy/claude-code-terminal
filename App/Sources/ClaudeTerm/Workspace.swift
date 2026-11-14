@@ -55,9 +55,9 @@ final class Pane: ObservableObject, Identifiable {
     /// the standard Quit menu item handles it.
     /// The same applies to Ghostty's tab and split keybinds, which would swallow the app's Go menu.
     /// Names as `ghostty +list-keybinds --default` prints them (Ghostty 1.x).
-    static let unboundKeys = ["super+q", "super+n", "super+shift+w", "ctrl+tab", "ctrl+shift+tab",
-                              "super+shift+[", "super+shift+]", "super+alt+arrow_up", "super+alt+arrow_down",
-                              "super+shift+v", "super+shift+m", "super+shift+t"]
+    static let unboundKeys = ["super+q", "super+n", "super+shift+n", "super+t", "super+w", "super+shift+w",
+                              "ctrl+tab", "ctrl+shift+tab", "super+[", "super+]", "super+shift+[", "super+shift+]",
+                              "super+u", "super+,", "super+b", "super+y", "super+r", "super+shift+t"]
         + (1...9).flatMap { ["super+\($0)", "super+digit_\($0)"] }
     /// Warm palette matching the window chrome (`Palette.main`), after the Claude desktop app. Theme
     /// commands are applied after the builder's, so colours set in the builder would be overwritten.
@@ -412,7 +412,7 @@ final class WorkspaceModel: ObservableObject {
         open(order[next])
     }
 
-    /// Cmd-Shift-N: another session in the selected pane's project.
+    /// Cmd-T: another session in the selected pane's project.
     func newSessionInCurrentProject() {
         guard let cwd = selectedSession?.cwd, !cwd.isEmpty else {
             notice = "Select a pane first: the new session starts in its project folder."

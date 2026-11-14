@@ -76,7 +76,7 @@ struct ClipboardButton: View {
 
     var body: some View {
         Button { clipboard.isShown.toggle() } label: {
-            Label("Clipboard History", systemImage: "list.clipboard")
+            ToolbarKeyLabel(title: "Clipboard History", icon: "list.clipboard", key: Shortcuts.clipboard)
         }
         .help(Shortcuts.hint("Clipboard history", Shortcuts.clipboard))
         .popover(isPresented: $clipboard.isShown, arrowEdge: .bottom) {

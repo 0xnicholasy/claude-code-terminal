@@ -46,7 +46,11 @@ struct ContentView: View {
         .toolbarBackground(Palette.main, for: .windowToolbar)
         .navigationTitle("")
         .onChange(of: model.selectedID) { _, _ in model.tab = .sessions }
-        .task { if !Bootstrap.isUnderTest { usage.start() } }
+        .task {
+            guard !Bootstrap.isUnderTest else { return }
+            usage.start()
+            CommandHold.shared.start()
+        }
         .onChange(of: model.selectedSession?.cwd, initial: true) { _, cwd in
             if !Bootstrap.isUnderTest { git.track(cwd) }
         }
@@ -56,9 +60,8 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 TabSwitcher(tab: $model.tab)
-                    .help([Shortcuts.hint("Sessions", Shortcuts.sessionsTab), Shortcuts.hint("Usage", Shortcuts.usageTab),
-                           Shortcuts.hint("Config", Shortcuts.configTab),
-                           Shortcuts.hint("Switch", Shortcuts.toggleTab)].joined(separator: "\n"))
+                    .help([Shortcuts.hint("Usage", Shortcuts.usageTab), Shortcuts.hint("Config", Shortcuts.configTab),
+                           "Press again to return to Sessions"].joined(separator: "\n"))
             }
             .plainBackground()
             ToolbarItem(placement: .principal) {
@@ -77,7 +80,7 @@ struct ContentView: View {
             }
             ToolbarItem {
                 Toggle(isOn: $showReplies) {
-                    Label("Formatted Output", systemImage: "text.document")
+                    ToolbarKeyLabel(title: "Formatted Output", icon: "text.document", key: Shortcuts.replies)
                 }
                 .toggleStyle(.button)
                 .help(Shortcuts.hint(showReplies ? "Formatted output on: Claude's markdown rendered in the pane. Turn off to stop reading the transcript"
@@ -87,7 +90,7 @@ struct ContentView: View {
                 Button {
                     if let cwd = DirectoryPicker.choose() { model.newSession(cwd: cwd) }
                 } label: {
-                    Label("New Session", systemImage: "plus")
+                    ToolbarKeyLabel(title: "New Session", icon: "plus", key: Shortcuts.newSession)
                 }
                 .help(Shortcuts.hint("New session in a folder", Shortcuts.newSession))
             }
@@ -126,7 +129,17 @@ struct TabSwitcher: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .shortcutHint(Self.shortcut(t, current: tab))
             }
+        }
+    }
+
+    /// Sessions has no key of its own: the open tab's key toggles back to it.
+    static func shortcut(_ t: DetailTab, current: DetailTab) -> String? {
+        switch t {
+        case .sessions: current == .usage ? Shortcuts.usageTab : current == .config ? Shortcuts.configTab : nil
+        case .usage: Shortcuts.usageTab
+        case .config: Shortcuts.configTab
         }
     }
 }
@@ -637,9 +650,11 @@ struct EmptyState: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Palette.accent)
                 .controlSize(.large)
+                .shortcutHint(Shortcuts.newSession)
                 .help(Shortcuts.hint("New session in a folder", Shortcuts.newSession))
                 Button("Usage") { model.tab = .usage }
                     .controlSize(.large)
+                    .shortcutHint(Shortcuts.usageTab)
                     .help(Shortcuts.hint("Plan quota and cost", Shortcuts.usageTab))
             }
         }
@@ -682,17 +697,18 @@ struct RecentRow: View {
 struct PaneStatusStrip: View {
     let session: SessionInfo
     @ObservedObject var model: WorkspaceModel
+    @ObservedObject private var hold = CommandHold.shared
 
     var body: some View {
         HStack(spacing: 10) {
             if let pos = model.selectedPanePosition, pos.count > 1 {
                 HStack(spacing: 2) {
-                    iconButton("chevron.left", Shortcuts.hint("Previous pane", Shortcuts.previousPane)) {
+                    iconButton("chevron.left", "Previous pane", Shortcuts.previousPane) {
                         model.cyclePane(by: -1)
                     }
                     Text("\(pos.index) of \(pos.count)").foregroundStyle(.secondary)
                         .help("Panes \(Shortcuts.cmd)1 to \(Shortcuts.cmd)8, last pane \(Shortcuts.cmd)9, cycle Ctrl-Tab")
-                    iconButton("chevron.right", Shortcuts.hint("Next pane", Shortcuts.nextPane)) {
+                    iconButton("chevron.right", "Next pane", Shortcuts.nextPane) {
                         model.cyclePane(by: 1)
                     }
                 }
@@ -717,10 +733,10 @@ struct PaneStatusStrip: View {
                 Text("background priority").foregroundStyle(.tertiary).help("ccgovd lowered this session's CPU priority")
             }
             if session.rssBytes > 0 { Text(Formatting.bytes(session.rssBytes)).foregroundStyle(.secondary) }
-            iconButton("plus", Shortcuts.hint("New session in this project", Shortcuts.newInProject)) {
+            iconButton("plus", "New session in this project", Shortcuts.newInProject) {
                 model.newSessionInCurrentProject()
             }
-            iconButton("xmark", Shortcuts.hint("Close pane", Shortcuts.closePane)) { model.close(session.sessionId) }
+            iconButton("xmark", "Close pane", Shortcuts.closePane) { model.close(session.sessionId) }
         }
         .font(.caption.monospacedDigit())
         .lineLimit(1)
@@ -731,14 +747,20 @@ struct PaneStatusStrip: View {
         .overlay(alignment: .top) { Rectangle().fill(Palette.hairline).frame(height: 1) }
     }
 
-    private func iconButton(_ icon: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+    /// While Command is held the key combination is written next to the icon: these buttons sit too close
+    /// together for overlaid badges.
+    private func iconButton(_ icon: String, _ help: String, _ key: String,
+                            _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
-                .frame(width: 18, height: 18).contentShape(Rectangle())
+            HStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                if hold.isHeld { Text(key).font(.system(size: 10, weight: .semibold)) }
+            }
+            .frame(minWidth: 18, minHeight: 18).contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .help(help)
+        .foregroundStyle(hold.isHeld ? Palette.text : .secondary)
+        .help(Shortcuts.hint(help, key))
     }
 }
 
@@ -884,5 +906,121 @@ enum LinkPolicy {
         guard let type, !isDirectory, !isPackage, !isExecutable else { return .reveal }
         if launchableTypes.contains(where: type.conforms(to:)) { return .reveal }
         return openableTypes.contains(where: type.conforms(to:)) ? .open : .reveal
+    }
+}
+
+// MARK: Shortcut hints
+
+/// Tracks whether the Command key has been held on its own long enough to show shortcut badges.
+/// A quick Cmd-N never shows them: any key pressed while Command is down cancels the pending reveal.
+@MainActor
+final class CommandHold: ObservableObject {
+    static let shared = CommandHold()
+    static let delay: TimeInterval = 0.4
+
+    @Published private(set) var isHeld = false
+    private var generation = 0
+    private let schedule: (TimeInterval, @escaping @MainActor () -> Void) -> Void
+    private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+
+    init(schedule: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { work() } }
+    }) {
+        self.schedule = schedule
+    }
+
+    /// Command went down or up (other modifiers may be down too).
+    func commandChanged(isDown: Bool) {
+        generation += 1
+        guard isDown else { return hide() }
+        let g = generation
+        schedule(Self.delay) { [weak self] in
+            guard let self, self.generation == g else { return }
+            self.isHeld = true
+        }
+    }
+
+    /// A key was pressed: the user is typing a shortcut, so drop any pending or visible badges.
+    func keyPressed() {
+        generation += 1
+        hide()
+    }
+
+    private func hide() { if isHeld { isHeld = false } }
+
+    /// Watches this app's key events. Releases outside the app never arrive, so losing focus hides the badges.
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
+            MainActor.assumeIsolated {
+                if event.type == .keyDown {
+                    self?.keyPressed()
+                } else {
+                    self?.commandChanged(isDown: event.modifierFlags.contains(.command))
+                }
+            }
+            return event
+        }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.keyPressed() }
+        }
+    }
+}
+
+/// Small key-combination badge hung just below a control while Command is held, so the label stays readable.
+struct ShortcutHint: ViewModifier {
+    let key: String?
+    @ObservedObject private var hold = CommandHold.shared
+
+    func body(content: Content) -> some View {
+        // A zero-height anchor on the control's bottom edge; the badge hangs from it.
+        content.overlay(alignment: .bottom) {
+            Color.clear.frame(height: 0).overlay(alignment: .top) {
+                if hold.isHeld, let key {
+                    Text(key)
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Palette.main)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Palette.text))
+                        .fixedSize()
+                        .padding(.top, 3)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: hold.isHeld)
+    }
+}
+
+/// Toolbar button label whose icon is replaced by the key combination while Command is held. The toolbar's
+/// glass group clips overlays, so a hanging badge would not show there.
+struct ToolbarKeyLabel: View {
+    let title: String
+    let icon: String
+    let key: String
+    @ObservedObject private var hold = CommandHold.shared
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            if hold.isHeld {
+                Text(key).font(.system(size: 11, weight: .semibold))
+            } else {
+                Image(systemName: icon)
+            }
+        }
+    }
+}
+
+extension View {
+    /// Shows `key` over this control while the user holds Command (see `CommandHold`).
+    func shortcutHint(_ key: String?) -> some View {
+        modifier(ShortcutHint(key: key))
     }
 }

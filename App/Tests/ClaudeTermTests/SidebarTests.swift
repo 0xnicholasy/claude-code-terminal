@@ -205,4 +205,30 @@ struct SidebarTests {
         #expect(Shortcuts.pane(index: 9, count: 12) == nil)
         #expect(Shortcuts.pane(index: 3, count: 3) == nil)
     }
+
+    @MainActor @Test func commandHoldShowsHintsOnlyAfterAnUninterruptedHold() {
+        var pending: [@MainActor () -> Void] = []
+        let hold = CommandHold { delay, work in
+            #expect(delay == CommandHold.delay)
+            pending.append(work)
+        }
+        func fire() { let p = pending; pending = []; p.forEach { $0() } }
+
+        hold.commandChanged(isDown: true)
+        #expect(!hold.isHeld) // nothing before the delay
+        fire()
+        #expect(hold.isHeld)
+        hold.commandChanged(isDown: false)
+        #expect(!hold.isHeld) // release hides
+
+        hold.commandChanged(isDown: true)
+        hold.keyPressed() // Cmd-N typed quickly: no flash
+        fire()
+        #expect(!hold.isHeld)
+
+        hold.commandChanged(isDown: true)
+        hold.commandChanged(isDown: false) // tapped and released before the delay
+        fire()
+        #expect(!hold.isHeld)
+    }
 }

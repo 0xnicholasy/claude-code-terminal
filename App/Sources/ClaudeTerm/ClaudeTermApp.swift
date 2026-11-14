@@ -38,7 +38,6 @@ struct ClaudeTermApp: App {
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
-            SidebarCommands()
             AppInfoCommands(updates: updates)
             CommandGroup(replacing: .newItem) {
                 Button("New Session...") {
@@ -46,7 +45,7 @@ struct ClaudeTermApp: App {
                 }
                 .keyboardShortcut("n")
                 Button("New Session in This Project") { model.newSessionInCurrentProject() }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .keyboardShortcut("t")
                     .disabled(model.selectedID == nil)
                 Button("New Session in Worktree...") {
                     guard let cwd = model.selectedSession?.cwd, !cwd.isEmpty else {
@@ -61,23 +60,29 @@ struct ClaudeTermApp: App {
                         worktreeRequest = WorktreeSheet.Request(cwd: cwd, topLevel: top)
                     }
                 }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(model.selectedID == nil || worktreeRequest != nil)
             }
+            // Drops the window's Close (Cmd-W): Cmd-W closes the pane, as in a browser.
+            CommandGroup(replacing: .saveItem) {}
             CommandGroup(after: .newItem) {
                 Button("Close Pane") {
                     if let id = model.selectedID { model.close(id) }
                 }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
+                .keyboardShortcut("w")
                 .disabled(model.selectedID == nil)
             }
             CommandGroup(after: .pasteboard) {
                 Button("Clipboard History") { clipboard.isShown.toggle() }
-                    .keyboardShortcut("v", modifiers: [.command, .shift])
+                    .keyboardShortcut("y")
             }
-            CommandGroup(after: .sidebar) {
+            CommandGroup(replacing: .sidebar) {
+                Button("Toggle Sidebar") {
+                    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("b")
                 Toggle("Formatted Output", isOn: $showReplies)
-                    .keyboardShortcut("m", modifiers: [.command, .shift])
+                    .keyboardShortcut("r")
             }
             NavigationCommands(model: model)
         }
@@ -107,27 +112,25 @@ struct NavigationCommands: Commands {
     var body: some Commands {
         CommandMenu("Go") {
             Button("Sessions") { model.tab = .sessions }
-                .keyboardShortcut("1", modifiers: [.command, .control])
-            Button("Usage") { model.tab = .usage }
-                .keyboardShortcut("2", modifiers: [.command, .control])
-            Button("Config") { model.tab = .config }
-                .keyboardShortcut("3", modifiers: [.command, .control])
-            Button("Toggle Sessions / Usage") { model.tab = model.tab == .usage ? .sessions : .usage }
-                .keyboardShortcut("u", modifiers: [.command, .shift])
+            // Pressing Usage or Config again returns to Sessions.
+            Button("Usage") { model.tab = model.tab == .usage ? .sessions : .usage }
+                .keyboardShortcut("u")
+            Button("Config") { model.tab = model.tab == .config ? .sessions : .config }
+                .keyboardShortcut(",")
             Divider()
             Button("Next Pane") { model.cyclePane(by: 1) }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .keyboardShortcut("]")
             Button("Previous Pane") { model.cyclePane(by: -1) }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .keyboardShortcut("[")
             Button("Next Pane (Ctrl-Tab)") { model.cyclePane(by: 1) }
                 .keyboardShortcut(.tab, modifiers: [.control])
             Button("Previous Pane (Ctrl-Shift-Tab)") { model.cyclePane(by: -1) }
                 .keyboardShortcut(.tab, modifiers: [.control, .shift])
             Divider()
             Button("Next Session in Sidebar") { model.cycleSession(by: 1) }
-                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .keyboardShortcut("]", modifiers: [.command, .shift])
             Button("Previous Session in Sidebar") { model.cycleSession(by: -1) }
-                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .keyboardShortcut("[", modifiers: [.command, .shift])
             Divider()
             ForEach(1...9, id: \.self) { n in
                 Button(n == 9 ? "Last Pane" : "Pane \(n)") { model.selectPane(number: n) }

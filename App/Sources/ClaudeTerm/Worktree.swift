@@ -73,7 +73,7 @@ enum Worktree {
     }
 }
 
-/// Cmd-Shift-T: names the worktree for a new session in the selected pane's repo.
+/// Cmd-Shift-N: names the worktree for a new session in the selected pane's repo.
 struct WorktreeSheet: View {
     /// What the sheet was opened for: the selected session's folder and its git top level (resolved
     /// before the sheet opens, so a pane in a repo subfolder still names the repo).

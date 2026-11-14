@@ -215,21 +215,21 @@ enum Formatting {
 enum Shortcuts {
     static let cmd = "\u{2318}", shift = "\u{21E7}", option = "\u{2325}", control = "\u{2303}"
 
+    // Two-key Command shortcuts where possible, browser-style: panes behave like tabs.
     static let newSession = cmd + "N"
-    static let newInProject = shift + cmd + "N"
-    static let newWorktree = shift + cmd + "T"
-    static let closePane = shift + cmd + "W"
-    static let nextPane = shift + cmd + "]"
-    static let previousPane = shift + cmd + "["
-    static let sessionsTab = control + cmd + "1"
-    static let usageTab = control + cmd + "2"
-    static let configTab = control + cmd + "3"
-    static let toggleTab = shift + cmd + "U"
-    static let nextSession = option + cmd + "\u{2193}"
-    static let previousSession = option + cmd + "\u{2191}"
-    static let toggleSidebar = control + cmd + "S"
-    static let clipboard = shift + cmd + "V"
-    static let replies = shift + cmd + "M"
+    static let newInProject = cmd + "T"
+    static let newWorktree = shift + cmd + "N"
+    static let closePane = cmd + "W"
+    static let nextPane = cmd + "]"
+    static let previousPane = cmd + "["
+    /// Usage and Config toggle: pressing the key again returns to Sessions.
+    static let usageTab = cmd + "U"
+    static let configTab = cmd + ","
+    static let nextSession = shift + cmd + "]"
+    static let previousSession = shift + cmd + "["
+    static let toggleSidebar = cmd + "B"
+    static let clipboard = cmd + "Y"
+    static let replies = cmd + "R"
 
     /// Cmd-1 to Cmd-8 select panes 1 to 8; Cmd-9 selects the last pane.
     static func pane(index: Int, count: Int) -> String? {

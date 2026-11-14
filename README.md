@@ -56,13 +56,14 @@ MCP servers, skills, agents and hooks for the selected session's project, each w
 | Keys | Action |
 |---|---|
 | Cmd-1 ... Cmd-8, Cmd-9 | Pane 1 to 8, last pane |
-| Ctrl-Tab, Cmd-Shift-] / [ | Next / previous pane |
-| Cmd-Option-Down / Up | Next / previous session in the sidebar |
-| Cmd-Ctrl-1 / 2 / 3, Cmd-Shift-U | Sessions / Usage / Config tab; toggle Sessions / Usage |
-| Cmd-N, Cmd-Shift-N | New session, new session in this project |
-| Cmd-Shift-W, Cmd-Ctrl-S | Close pane, toggle sidebar |
-| Cmd-Shift-M | Formatted Output on / off |
-| Cmd-Shift-V | Clipboard history: type to filter, Up / Down, Return to copy, Cmd-1 ... Cmd-9 to copy a row |
+| Cmd-] / [, Ctrl-Tab | Next / previous pane |
+| Cmd-Shift-] / [ | Next / previous session in the sidebar |
+| Cmd-U, Cmd-, | Usage / Config tab; press again to return to Sessions |
+| Cmd-N, Cmd-T, Cmd-Shift-N | New session, new session in this project, new session in a worktree |
+| Cmd-W, Cmd-B | Close pane, toggle sidebar |
+| Cmd-R | Formatted Output on / off |
+| Cmd-Y | Clipboard history: type to filter, Up / Down, Return to copy, Cmd-1 ... Cmd-9 to copy a row |
+| Hold Cmd | Show each control's shortcut |
 
 ## Performance
 
